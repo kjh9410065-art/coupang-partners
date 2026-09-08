@@ -1,0 +1,6 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
+  "name": "coupang-partners-automation",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08"
+}
