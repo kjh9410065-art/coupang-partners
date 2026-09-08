@@ -9,14 +9,9 @@ const handler = {
   async fetch(request: Request, env: BootstrapEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
 
-    // 브라우저에서 직접 실행되는 것을 막고 POST만 허용합니다.
+    // 초기 생성은 KV 잠금으로 단 한 번만 실행되므로 배포 확인을 위해 GET도 허용합니다.
     if (url.pathname === "/generate-bootstrap") {
-      if (request.method !== "POST") {
-        return Response.json({ ok: false, message: "POST 요청만 허용됩니다." }, { status: 405 });
-      }
-
       try {
-        // 쿼리로 검색어를 지정하지 않으면 현재 기본 상품군으로 1회 생성합니다.
         const keyword = url.searchParams.get("keyword")?.trim() || "무선청소기";
         const result = await runBootstrap(env, keyword);
         return Response.json({ ok: true, message: "초기 콘텐츠 생성이 완료되었습니다.", ...result });
