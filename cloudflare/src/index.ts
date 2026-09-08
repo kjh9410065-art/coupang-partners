@@ -3,6 +3,7 @@
  *
  * 흐름:
  * 쿠팡 상품 검색 → AI 상품 추천 → 블로그 제목/본문 생성 → Cloudflare KV 저장
+ * → 웹 대시보드에서 최신 결과 확인
  *
  * API 키는 코드에 넣지 않고 Cloudflare Workers Secrets에서 읽습니다.
  */
@@ -114,15 +115,22 @@ async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096):
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const response = await fetch(
-          `${GEMINI_HOST}/${model}:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`,
+          `${GEMINI_HOST}/${model}:generateContent`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              // API 키를 URL에 넣지 않고 헤더로 전달해 로그 노출 가능성을 줄입니다.
+              "x-goog-api-key": env.GEMINI_API_KEY,
+            },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
                 maxOutputTokens,
+                // 블로그 생성은 빠른 응답을 우선합니다.
                 thinkingConfig: { thinkingLevel: "low" },
+                // AI가 JSON을 반환해야 하는 단계에서는 파싱 안정성을 높입니다.
+                responseMimeType: "application/json",
               },
             }),
           },
@@ -211,8 +219,6 @@ async function generateBlog(env: Env, product: any, keyword: string) {
 
 검색어: ${keyword}
 상품명: ${product.productName}
-상품 이미지: ${product.productImage}
-상품 링크: ${product.productUrl}
 로켓배송 여부: ${product.isRocket}
 무료배송 여부: ${product.isFreeShipping}
 
@@ -228,7 +234,7 @@ async function generateBlog(env: Env, product: any, keyword: string) {
 - 네이버 블로그에 바로 붙여 넣기 쉬운 자연스러운 한국어로 작성한다.
 - 제목은 서로 다른 방향으로 5개 만든다.
 - 본문은 충분히 읽을 만한 분량으로 작성하되 의미 없는 문장을 늘리지 않는다.
-- 마지막에는 상품 링크를 한 번만 넣는다.
+- 본문 안에 상품 링크나 고지문을 직접 넣지 않는다. 시스템이 마지막에 정확히 한 번 삽입한다.
 
 반드시 아래 JSON 형식 하나만 반환한다.
 {
@@ -259,20 +265,15 @@ async function generateBlog(env: Env, product: any, keyword: string) {
 async function saveContent(env: Env, content: any) {
   const now = new Date();
   const key = `post:${now.toISOString()}`;
-
-  await env.CONTENT_STORE.put(
-    key,
-    JSON.stringify({
-      savedAt: now.toISOString(),
-      ...content,
-    }),
-  );
-
-  // 가장 최근 글을 빠르게 확인할 수 있도록 별도 키에도 저장합니다.
-  await env.CONTENT_STORE.put("latest", JSON.stringify({
+  const record = {
     savedAt: now.toISOString(),
     ...content,
-  }));
+  };
+
+  await env.CONTENT_STORE.put(key, JSON.stringify(record));
+
+  // 가장 최근 글을 빠르게 확인할 수 있도록 별도 키에도 저장합니다.
+  await env.CONTENT_STORE.put("latest", JSON.stringify(record));
 
   return key;
 }
@@ -301,9 +302,102 @@ async function createContent(env: Env, keyword: string) {
   return { ...content, storageKey };
 }
 
+/** HTML에 표시할 문자열을 안전하게 이스케이프합니다. */
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+/** 최신 생성 글을 확인하기 쉬운 웹 화면으로 보여줍니다. */
+async function renderDashboard(env: Env): Promise<Response> {
+  const latest = await env.CONTENT_STORE.get("latest", "json") as any;
+  const lastRun = await env.CONTENT_STORE.get("last-run", "json") as any;
+
+  const product = latest?.recommendation?.product;
+  const blog = latest?.blog;
+
+  const contentSection = latest && blog
+    ? `
+      <section class="card">
+        <div class="label">선정 상품</div>
+        <div class="product">
+          ${product?.productImage ? `<img src="${escapeHtml(product.productImage)}" alt="상품 이미지">` : ""}
+          <div>
+            <h2>${escapeHtml(product?.productName)}</h2>
+            <p>${escapeHtml(latest.keyword)} · ${escapeHtml(latest.savedAt)}</p>
+            ${product?.productUrl ? `<a class="button" href="${escapeHtml(product.productUrl)}" target="_blank" rel="noopener noreferrer">쿠팡 상품 보기</a>` : ""}
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="label">대표 제목</div>
+        <h1>${escapeHtml(blog.selectedTitle)}</h1>
+        <div class="label">제목 후보 5개</div>
+        <ol>${blog.titles.map((title: string) => `<li>${escapeHtml(title)}</li>`).join("")}</ol>
+      </section>
+
+      <section class="card">
+        <div class="label">네이버 블로그용 본문</div>
+        <div class="disclosure">${escapeHtml(blog.disclosure)}</div>
+        <div class="body">${escapeHtml(blog.body)}</div>
+        ${blog.partnerUrl ? `<a class="link" href="${escapeHtml(blog.partnerUrl)}" target="_blank" rel="noopener noreferrer">상품 링크</a>` : ""}
+      </section>
+    `
+    : `
+      <section class="card empty">
+        아직 자동 생성된 글이 없습니다.<br>
+        첫 자동 실행 후 이 화면에 결과가 표시됩니다.
+      </section>
+    `;
+
+  const runSection = lastRun
+    ? `<section class="card status"><div class="label">자동 실행 상태</div><strong>${lastRun.status === "success" ? "정상 완료" : "실행 실패"}</strong><p>${escapeHtml(lastRun.finishedAt ?? "")}</p>${lastRun.error ? `<pre>${escapeHtml(lastRun.error)}</pre>` : ""}</section>`
+    : "";
+
+  const html = `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>쿠팡파트너스 자동 콘텐츠</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f6f8;color:#202124;font-family:Arial,"Noto Sans KR",sans-serif;line-height:1.65}.wrap{max-width:900px;margin:0 auto;padding:32px 18px 60px}header{margin-bottom:24px}header h1{margin:0 0 6px;font-size:28px}header p{margin:0;color:#6b7280}.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:24px;margin:16px 0;box-shadow:0 3px 12px rgba(0,0,0,.04)}.label{font-size:12px;font-weight:700;color:#6b7280;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em}.product{display:flex;gap:20px;align-items:center}.product img{width:150px;height:150px;object-fit:contain;border:1px solid #eee;border-radius:12px;background:#fff}.product h2{margin:0 0 6px;font-size:20px}.product p{margin:0 0 14px;color:#6b7280;font-size:13px}.button{display:inline-block;padding:9px 14px;border-radius:9px;background:#111827;color:#fff;text-decoration:none;font-size:13px}h1{font-size:25px;margin:4px 0 22px}ol{margin:8px 0 0;padding-left:22px}li{margin:5px 0}.disclosure{padding:12px;background:#f8fafc;border-radius:10px;font-size:13px;color:#4b5563;margin-bottom:18px}.body{white-space:pre-wrap;font-size:16px}.link{display:inline-block;margin-top:20px;font-weight:700;text-decoration:none}.empty{text-align:center;color:#6b7280;padding:50px 20px}.status strong{font-size:18px}.status p{margin:4px 0;color:#6b7280;font-size:13px}.status pre{white-space:pre-wrap;background:#fff1f2;padding:12px;border-radius:8px;color:#991b1b}@media(max-width:600px){.wrap{padding:20px 12px 40px}.product{align-items:flex-start}.product img{width:105px;height:105px}.card{padding:18px}h1{font-size:21px}.body{font-size:15px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>쿠팡파트너스 자동 콘텐츠</h1>
+      <p>매일 자동으로 생성된 최신 상품 콘텐츠를 확인하는 화면입니다.</p>
+    </header>
+    ${runSection}
+    ${contentSection}
+  </main>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: {
+      "Content-Type": "text/html;charset=UTF-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    // 메인 화면: 가장 최근에 생성된 글을 사람이 보기 좋게 표시합니다.
+    if (url.pathname === "/") {
+      return renderDashboard(env);
+    }
 
     if (url.pathname === "/health") {
       return Response.json({
@@ -324,62 +418,17 @@ export default {
       });
     }
 
-    // 쿠팡 API 직접 검색 테스트: /coupang-search?keyword=무선청소기
-    if (url.pathname === "/coupang-search") {
-      const keyword = url.searchParams.get("keyword")?.trim() ?? "";
-      if (!keyword) return Response.json({ ok: false, message: "keyword가 필요합니다." }, { status: 400 });
-
-      try {
-        const products = await searchProducts(env, keyword);
-        return Response.json({ ok: true, keyword, count: products.length, products });
-      } catch (error) {
-        return Response.json(
-          { ok: false, message: error instanceof Error ? error.message : "쿠팡 API 호출 실패" },
-          { status: 502 },
-        );
-      }
-    }
-
-    // AI 상품 추천: 쿠팡 검색 → Gemini 선정 → 결과 반환
-    if (url.pathname === "/recommend") {
-      const keyword = url.searchParams.get("keyword")?.trim() ?? "";
-      if (!keyword) return Response.json({ ok: false, message: "keyword가 필요합니다." }, { status: 400 });
-
-      try {
-        const products = await searchProducts(env, keyword);
-        if (products.length === 0) return Response.json({ ok: false, message: "검색 결과가 없습니다." }, { status: 404 });
-
-        const recommendation = await recommendProduct(env, keyword, products);
-        return Response.json({ ok: true, keyword, ...recommendation });
-      } catch (error) {
-        return Response.json(
-          { ok: false, message: error instanceof Error ? error.message : "상품 추천 실패" },
-          { status: 502 },
-        );
-      }
-    }
-
-    // 완성 글 생성: 쿠팡 검색 → AI 상품 선정 → 제목/본문 생성 → KV 저장
-    if (url.pathname === "/generate") {
-      const keyword = url.searchParams.get("keyword")?.trim() ?? "";
-      if (!keyword) return Response.json({ ok: false, message: "keyword가 필요합니다." }, { status: 400 });
-
-      try {
-        const content = await createContent(env, keyword);
-        return Response.json({ ok: true, ...content });
-      } catch (error) {
-        return Response.json(
-          { ok: false, message: error instanceof Error ? error.message : "콘텐츠 생성 실패" },
-          { status: 502 },
-        );
-      }
-    }
-
-    // 가장 최근에 생성된 글을 확인합니다.
+    // 가장 최근에 생성된 글을 JSON으로 확인할 수 있습니다.
     if (url.pathname === "/latest") {
       const content = await env.CONTENT_STORE.get("latest", "json");
       if (!content) return Response.json({ ok: false, message: "저장된 글이 없습니다." }, { status: 404 });
       return Response.json({ ok: true, content });
+    }
+
+    // 자동 실행의 마지막 성공/실패 상태를 확인할 수 있습니다.
+    if (url.pathname === "/status") {
+      const status = await env.CONTENT_STORE.get("last-run", "json");
+      return Response.json({ ok: true, status: status ?? null });
     }
 
     return Response.json({ ok: false, message: "존재하지 않는 경로입니다." }, { status: 404 });
@@ -387,15 +436,37 @@ export default {
 
   /**
    * 매일 오전 9시(한국시간)에 실행됩니다.
-   * 날짜에 따라 검색어를 순환시키고 생성 결과를 KV에 저장합니다.
+   * Cron은 UTC 기준이므로 00:00 UTC를 사용합니다.
+   * 생성이 실패하면 예외를 다시 던져 Cloudflare Cron 기록에도 실패가 남도록 합니다.
    */
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     const keyword = getDailyKeyword(new Date(controller.scheduledTime));
+    const startedAt = new Date().toISOString();
 
-    ctx.waitUntil(
-      createContent(env, keyword)
-        .then((content) => console.log("자동 콘텐츠 생성 완료:", content.storageKey))
-        .catch((error) => console.error("자동 콘텐츠 생성 실패:", error)),
-    );
+    try {
+      const content = await createContent(env, keyword);
+
+      await env.CONTENT_STORE.put("last-run", JSON.stringify({
+        status: "success",
+        keyword,
+        storageKey: content.storageKey,
+        finishedAt: new Date().toISOString(),
+      }));
+
+      console.log("자동 콘텐츠 생성 완료:", content.storageKey);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "알 수 없는 오류";
+
+      await env.CONTENT_STORE.put("last-run", JSON.stringify({
+        status: "error",
+        keyword,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        error: message,
+      }));
+
+      console.error("자동 콘텐츠 생성 실패:", message);
+      throw error;
+    }
   },
 };
