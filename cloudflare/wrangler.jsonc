@@ -2,5 +2,18 @@
   "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
   "name": "coupang-partners-automation",
   "main": "src/index.ts",
-  "compatibility_date": "2026-09-08"
+  "compatibility_date": "2026-09-08",
+
+  // 생성된 블로그 콘텐츠를 Cloudflare에 저장합니다.
+  // ID를 직접 넣지 않으면 Wrangler가 자동으로 KV 리소스를 생성합니다.
+  "kv_namespaces": [
+    {
+      "binding": "CONTENT_STORE"
+    }
+  ],
+
+  // 한국 시간 오전 9시 = UTC 00:00에 하루 한 번 실행합니다.
+  "triggers": {
+    "crons": ["0 0 * * *"]
+  }
 }
