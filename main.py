@@ -1,6 +1,8 @@
+import html
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
+import webbrowser
 
 from PIL import Image, ImageTk
 
@@ -19,7 +21,7 @@ PARTNERS_DISCLOSURE = (
 
 
 class CoupangPartnersApp:
-    """쿠팡 상품 검색부터 제목/본문 생성과 복사까지 처리하는 GUI입니다."""
+    """쿠팡 상품 검색부터 제목/본문 생성과 블로그 미리보기까지 처리합니다."""
 
     def __init__(self, root):
         self.root = root
@@ -36,7 +38,7 @@ class CoupangPartnersApp:
         self._build_ui()
 
     def _build_ui(self):
-        """상품 선택 영역, 제목 영역, 본문 영역을 구성합니다."""
+        """상품 선택, 제목 선택, 본문 편집 영역을 구성합니다."""
         root = self.root
         root.columnconfigure(0, weight=1)
         root.rowconfigure(1, weight=1)
@@ -101,7 +103,7 @@ class CoupangPartnersApp:
         result_scroll.grid(row=0, column=1, sticky="ns")
         self.result_list.configure(yscrollcommand=result_scroll.set)
 
-        # 선택한 상품의 간단한 정보와 다음 단계 버튼입니다.
+        # 선택 상품 정보와 제목 생성 버튼입니다.
         product_action = ttk.Frame(top)
         product_action.grid(row=2, column=1, sticky="ew")
         product_action.columnconfigure(0, weight=1)
@@ -122,13 +124,14 @@ class CoupangPartnersApp:
         self.title_button.grid(row=0, column=1, padx=(10, 0))
 
         # ------------------------------
-        # 중앙 제목 영역
+        # 중앙 제목 + 본문 영역
         # ------------------------------
         content = ttk.Frame(root, padding=(10, 0, 10, 8))
         content.grid(row=1, column=0, sticky="nsew")
         content.columnconfigure(0, weight=1)
         content.rowconfigure(1, weight=1)
 
+        # 제목 후보를 선택하는 영역입니다.
         title_box = ttk.LabelFrame(content, text="제목 선택", padding=8)
         title_box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         title_box.columnconfigure(0, weight=1)
@@ -168,7 +171,7 @@ class CoupangPartnersApp:
         )
         self.body_button.grid(row=0, column=1, padx=(10, 0))
 
-        # 생성된 본문이 화면 대부분을 차지하도록 설정합니다.
+        # 생성된 글을 직접 확인하거나 수정할 수 있는 영역입니다.
         body_box = ttk.LabelFrame(content, text="네이버 블로그 본문", padding=8)
         body_box.grid(row=1, column=0, sticky="nsew")
         body_box.columnconfigure(0, weight=1)
@@ -191,7 +194,7 @@ class CoupangPartnersApp:
         self.blog_text.configure(yscrollcommand=body_scroll.set)
 
         # ------------------------------
-        # 하단 버튼/상태 영역
+        # 하단 버튼 영역
         # ------------------------------
         footer = ttk.Frame(root, padding=(10, 0, 10, 10))
         footer.grid(row=2, column=0, sticky="ew")
@@ -200,6 +203,7 @@ class CoupangPartnersApp:
         self.status_label = ttk.Label(footer, text="준비 완료")
         self.status_label.grid(row=0, column=0, sticky="w")
 
+        # 일반 텍스트를 클립보드에 복사합니다.
         self.copy_button = ttk.Button(
             footer,
             text="본문 전체 복사",
@@ -207,12 +211,20 @@ class CoupangPartnersApp:
         )
         self.copy_button.grid(row=0, column=1, padx=(8, 0))
 
+        # 이미지와 제목까지 포함한 브라우저 미리보기를 엽니다.
+        self.preview_button = ttk.Button(
+            footer,
+            text="블로그 미리보기",
+            command=self.preview_blog,
+        )
+        self.preview_button.grid(row=0, column=2, padx=(8, 0))
+
         self.clear_button = ttk.Button(
             footer,
             text="초기화",
             command=self.clear_all,
         )
-        self.clear_button.grid(row=0, column=2, padx=(8, 0))
+        self.clear_button.grid(row=0, column=3, padx=(8, 0))
 
     def search(self):
         """입력한 키워드로 쿠팡파트너스 상품을 검색합니다."""
@@ -228,9 +240,12 @@ class CoupangPartnersApp:
         self.root.update_idletasks()
 
         try:
-            # 쿠팡파트너스 검색 API는 최대 10개만 요청합니다.
+            # 검색 API의 요청 한도에 맞춰 최대 10개만 가져옵니다.
             self.products = search_products(keyword, limit=10)
             self.result_list.delete(0, tk.END)
+            self.title_list.delete(0, tk.END)
+            self.title_candidates = []
+            self.selected_product = None
 
             for index, product in enumerate(self.products, start=1):
                 name = product.get("productName", "상품명 없음")
@@ -262,6 +277,9 @@ class CoupangPartnersApp:
 
         index = selection[0]
         self.selected_product = self.products[index]
+        self.title_candidates = []
+        self.title_list.delete(0, tk.END)
+        self.body_button.config(state="disabled")
 
         name = self.selected_product.get("productName", "상품명 없음")
         price = self.selected_product.get("productPrice", "")
@@ -273,25 +291,23 @@ class CoupangPartnersApp:
 
         self.status_label.config(text="상품 정보와 이미지를 준비하는 중...")
         self.title_button.config(state="disabled")
-        self.body_button.config(state="disabled")
         self.root.update_idletasks()
 
         try:
-            # 대표 이미지를 다운로드해 화면에 표시합니다.
+            # 대표 이미지와 파트너 링크를 상품 데이터에 추가합니다.
             prepared = prepare_product(self.selected_product)
             self.selected_product = prepared
             self.show_product_image(prepared.get("image_path", ""))
             self.title_button.config(state="normal")
             self.status_label.config(text="상품 선택 완료 / 제목을 만들어주세요.")
         except Exception as exc:
-            # 이미지가 없어도 상품 자체는 사용할 수 있게 합니다.
             self.show_product_image("")
             self.title_button.config(state="normal")
             self.status_label.config(text="상품 선택 완료 / 이미지 없음")
             print(f"[상품 준비 오류] {exc}")
 
     def show_product_image(self, image_path):
-        """상품 이미지를 화면 크기에 맞춰 표시합니다."""
+        """대표 상품 이미지를 화면에 표시합니다."""
         if not image_path or not Path(image_path).exists():
             self.product_photo = None
             self.image_label.config(image="", text="상품 이미지 없음")
@@ -319,21 +335,21 @@ class CoupangPartnersApp:
         free_shipping = product.get("isFreeShipping", False)
 
         prompt = f"""
-네이버 블로그용 쿠팡파트너스 상품 소개 글의 제목 후보 5개를 작성해라.
+네이버 블로그용 쿠팡파트너스 상품 소개 글의 제목 후보를 정확히 5개 작성해라.
 
 실제 상품명: {name}
 로켓배송 여부: {rocket}
 무료배송 여부: {free_shipping}
 
 규칙:
-- 제목은 서로 확실히 다른 방향으로 5개 작성한다.
-- 실제 상품 정보에서 확인되지 않는 특징이나 성능을 제목에 넣지 않는다.
-- 가격, 할인율, 최저가 등의 표현은 넣지 않는다.
-- '추천', '후기', '내돈내산'처럼 실제 경험을 암시하는 표현은 사용하지 않는다.
+- 서로 다른 방향의 제목 5개를 만든다.
+- 실제 정보에 없는 특징이나 성능을 제목에 넣지 않는다.
+- 가격, 할인율, 최저가, 가성비 표현을 넣지 않는다.
+- 실제 구매나 사용 경험을 암시하는 '후기', '내돈내산' 등을 사용하지 않는다.
 - 과장 광고처럼 보이는 표현을 피한다.
-- 검색어를 억지로 반복하지 않는다.
-- 한국어 블로그 제목처럼 자연스럽고 클릭하고 싶은 문장으로 작성한다.
-- 번호와 제목만 1~5번 형식으로 출력한다.
+- 같은 단어와 문장 구조를 반복하지 않는다.
+- 자연스러운 한국어 블로그 제목으로 작성한다.
+- 반드시 1. 제목 형식으로 5줄만 출력한다.
 """
 
         self.title_button.config(state="disabled")
@@ -357,7 +373,9 @@ class CoupangPartnersApp:
             self.selected_title_label.config(
                 text="제목 후보가 생성되었습니다. 사용할 제목을 선택해주세요."
             )
-            self.status_label.config(text=f"제목 {len(self.title_candidates)}개 생성 완료")
+            self.status_label.config(
+                text=f"제목 {len(self.title_candidates)}개 생성 완료"
+            )
 
         except Exception as exc:
             messagebox.showerror("제목 생성 오류", str(exc))
@@ -367,7 +385,7 @@ class CoupangPartnersApp:
 
     @staticmethod
     def _parse_titles(text):
-        """Gemini 응답에서 번호가 붙은 제목만 추출합니다."""
+        """Gemini 응답에서 제목 후보만 추출합니다."""
         titles = []
 
         for line in text.splitlines():
@@ -375,24 +393,25 @@ class CoupangPartnersApp:
             if not line:
                 continue
 
-            # '1. 제목', '1) 제목', '- 제목' 등의 형태를 처리합니다.
             cleaned = line
+
+            # 번호가 붙은 응답을 처리합니다.
             if len(cleaned) >= 2 and cleaned[0].isdigit():
-                if cleaned[1:2] in (".", ")", "-"):
+                if cleaned[1:2] in (".", ")", "-", ":"):
                     cleaned = cleaned[2:].strip()
             elif cleaned.startswith("-"):
                 cleaned = cleaned[1:].strip()
 
-            if cleaned and len(cleaned) >= 5:
-                # AI가 제목 앞뒤에 따옴표를 붙였으면 제거합니다.
-                cleaned = cleaned.strip("\"'“”‘’")
-                if cleaned and cleaned not in titles:
-                    titles.append(cleaned)
+            cleaned = cleaned.strip('"\'“”‘’')
+
+            # 너무 짧은 문자열과 중복 제목은 제외합니다.
+            if len(cleaned) >= 5 and cleaned not in titles:
+                titles.append(cleaned)
 
         return titles
 
     def select_title(self, _event=None):
-        """제목 목록에서 선택한 제목을 본문 생성용으로 저장합니다."""
+        """제목 목록에서 선택한 제목을 본문 생성 단계에 연결합니다."""
         selection = self.title_list.curselection()
         if not selection:
             self.body_button.config(state="disabled")
@@ -441,22 +460,22 @@ class CoupangPartnersApp:
 상품명: {name}
 로켓배송 여부: {rocket}
 무료배송 여부: {free_shipping}
-쿠팡파트너스 링크: {partner_url}
 
 [작성 목표]
-광고 문구처럼 딱딱한 글이 아니라 실제 블로그에서 읽기 편한 자연스러운 상품 소개 글을 작성한다.
-상품을 직접 사용한 것처럼 쓰지 말고, 제공된 정보에서 확인할 수 있는 범위 안에서 설명한다.
+광고 문구처럼 딱딱한 글이 아니라 사람이 읽기 편한 자연스러운 상품 소개 글을 작성한다.
+직접 사용한 것처럼 쓰지 않으며 실제 구매자 후기를 만들어내지 않는다.
 
 [본문 구성]
-1. 선택한 제목을 맨 첫 줄에 그대로 쓴다.
+1. 선택한 제목을 첫 줄에 그대로 쓴다.
 2. 제목 아래에 자연스러운 도입부를 작성한다.
-3. 상품명을 중심으로 어떤 상품인지 자연스럽게 설명한다.
-4. 확인 가능한 특징과 장점은 충분히 풀어서 설명한다.
-5. 단순한 정보 나열보다 어떤 상황이나 사용자에게 도움이 될 수 있는지를 자연스럽게 연결한다.
-6. 아쉬운 점은 제공된 정보에서 실제로 판단할 수 있을 때만 조심스럽게 언급한다. 근거가 없으면 단점을 만들지 않는다.
-7. 어떤 사람에게 잘 맞을지 자연스럽게 정리한다.
-8. 마지막에는 구매를 고민하는 사람이 판단하기 쉽도록 부담스럽지 않게 마무리한다.
-9. 글 마지막에 쿠팡파트너스 링크를 그대로 한 번 넣는다.
+3. 상품이 어떤 제품인지 상품명에서 확인되는 범위 안에서 설명한다.
+4. 제공된 실제 정보로 판단할 수 있는 특징과 장점을 충분히 풀어쓴다.
+5. 단순 나열을 피하고 어떤 상황에서 도움이 될 수 있는지 자연스럽게 연결한다.
+6. 아쉬운 점은 실제 제공 정보에서 판단할 수 있을 때만 언급한다.
+7. 정보가 부족한 부분은 추측하지 않는다.
+8. 어떤 사람에게 잘 맞을지 자연스럽게 정리한다.
+9. 마지막에는 구매를 고민하는 사람이 판단하기 쉽도록 부담스럽게 권하지 않고 마무리한다.
+10. 마지막 줄에는 쿠팡파트너스 링크를 그대로 한 번 넣는다.
 
 [절대 금지]
 - 가격, 할인율, 최저가, 가성비 평가를 언급하지 않는다.
@@ -465,16 +484,15 @@ class CoupangPartnersApp:
 - '내돈내산', '직접 사용해보니' 같은 경험형 표현을 사용하지 않는다.
 - 확인되지 않은 장점을 억지로 추가하지 않는다.
 - 과장 광고나 확정적인 구매 권유를 하지 않는다.
-- '안녕하세요', '오늘은 ~ 알아보겠습니다'처럼 흔한 AI 도입 문구는 사용하지 않는다.
-- '확인된 상품 정보'라는 별도 표를 만들지 않는다.
-- 제목을 새로 바꾸지 않는다.
+- 흔한 AI식 도입 문구를 반복하지 않는다.
+- 제목을 임의로 변경하지 않는다.
+- 별도의 '확인된 상품 정보' 표를 만들지 않는다.
 
 [분량]
-네이버 블로그에 바로 붙여넣을 수 있는 충분한 분량으로 작성한다.
-짧은 상품 설명 한두 문단으로 끝내지 말고, 확인 가능한 정보 안에서 내용을 충분히 풀어쓴다.
+짧은 한두 문단으로 끝내지 말고, 확인 가능한 정보 안에서 충분한 분량으로 작성한다.
+문단마다 같은 표현을 반복하지 말고 자연스럽게 이어간다.
 
-[마지막]
-본문 마지막에는 아래 링크를 그대로 넣는다.
+[마지막 링크]
 {partner_url}
 """
 
@@ -487,9 +505,8 @@ class CoupangPartnersApp:
         try:
             text = generate_text(prompt).strip()
 
-            # 고지 문구를 본문 최상단에 넣습니다.
+            # 고지 문구는 게시물 최상단에 넣습니다.
             final_text = f"{PARTNERS_DISCLOSURE}\n\n{text}"
-
             self.blog_text.insert("1.0", final_text)
             self.status_label.config(text="블로그 본문 생성 완료")
 
@@ -502,6 +519,126 @@ class CoupangPartnersApp:
         finally:
             self.title_button.config(state="normal" if self.selected_product else "disabled")
             self.body_button.config(state="normal")
+
+    def _get_body_without_disclosure(self):
+        """미리보기용 본문에서 고지 문구를 분리하지 않고 그대로 사용합니다."""
+        return self.blog_text.get("1.0", "end-1c").strip()
+
+    def preview_blog(self):
+        """제목, 상품 이미지, 본문, 파트너스 링크를 포함한 HTML 미리보기를 엽니다."""
+        if not self.selected_product:
+            messagebox.showwarning("미리보기", "먼저 상품을 선택해주세요.")
+            return
+
+        raw_text = self._get_body_without_disclosure()
+        if not raw_text:
+            messagebox.showwarning("미리보기", "먼저 블로그 본문을 생성해주세요.")
+            return
+
+        product = self.selected_product
+        title = "상품 소개"
+        selection = self.title_list.curselection()
+        if selection and selection[0] < len(self.title_candidates):
+            title = self.title_candidates[selection[0]]
+
+        # 본문 텍스트를 HTML 문단으로 변환하되, 링크 줄은 별도로 처리합니다.
+        partner_url = product.get("partner_url", product.get("productUrl", ""))
+        escaped_url = html.escape(partner_url, quote=True)
+        escaped_text = html.escape(raw_text)
+        paragraphs = []
+        for block in escaped_text.split("\n\n"):
+            block = block.strip()
+            if not block:
+                continue
+            paragraphs.append(
+                "<p>" + block.replace("\n", "<br>") + "</p>"
+            )
+
+        # 준비된 관련 상품 이미지만 미리보기에 넣습니다.
+        image_paths = product.get("image_paths", [])
+        if not image_paths and product.get("image_path"):
+            image_paths = [product.get("image_path")]
+
+        image_html = []
+        for image_path in image_paths:
+            if not image_path:
+                continue
+            path = Path(image_path)
+            if not path.exists():
+                continue
+            image_html.append(
+                f'<img src="{html.escape(path.as_uri(), quote=True)}" '
+                'style="max-width:100%;height:auto;margin:16px 0;display:block;">'
+            )
+
+        html_content = f"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)}</title>
+<style>
+body {{
+    margin: 0;
+    padding: 32px 20px 60px;
+    background: #f5f5f5;
+    font-family: 'Malgun Gothic', sans-serif;
+    color: #222;
+    line-height: 1.8;
+}}
+.article {{
+    max-width: 760px;
+    margin: 0 auto;
+    background: white;
+    padding: 36px;
+    box-sizing: border-box;
+}}
+h1 {{
+    margin-top: 0;
+    line-height: 1.4;
+    font-size: 28px;
+}}
+p {{
+    margin: 0 0 20px;
+}}
+.notice {{
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 28px;
+}}
+.images {{
+    margin: 20px 0;
+}}
+.partner {{
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}}
+.partner a {{
+    word-break: break-all;
+}}
+</style>
+</head>
+<body>
+<div class="article">
+    <div class="notice">{html.escape(PARTNERS_DISCLOSURE)}</div>
+    <h1>{html.escape(title)}</h1>
+    <div class="images">{''.join(image_html)}</div>
+    <div class="body">{''.join(paragraphs)}</div>
+    <div class="partner">
+        <a href="{escaped_url}" target="_blank" rel="noopener">{escaped_url}</a>
+    </div>
+</div>
+</body>
+</html>"""
+
+        preview_path = Path(__file__).resolve().parent / "images" / "blog_preview.html"
+        preview_path.parent.mkdir(exist_ok=True)
+        preview_path.write_text(html_content, encoding="utf-8")
+
+        # 기본 브라우저에서 미리보기를 엽니다.
+        webbrowser.open(preview_path.as_uri())
+        self.status_label.config(text="블로그 미리보기를 열었습니다.")
 
     def copy_blog(self):
         """생성된 블로그 본문 전체를 클립보드에 복사합니다."""
