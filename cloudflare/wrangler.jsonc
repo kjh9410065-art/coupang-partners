@@ -1,20 +1,17 @@
 {
   "$schema": "https://developers.cloudflare.com/workers/wrangler/config-schema.json",
   "name": "coupang-partners-automation",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-09-08",
 
   // 생성된 블로그 콘텐츠를 Cloudflare에 저장합니다.
-  // ID를 직접 넣지 않으면 Wrangler가 자동으로 KV 리소스를 생성합니다.
   "kv_namespaces": [
     {
       "binding": "CONTENT_STORE"
     }
   ],
 
-  // 배포 직후 첫 실제 생성 테스트를 위해 5분 간격 트리거를 임시로 사용합니다.
-  // 코드에서 첫 1회만 실행하고 이후에는 무시합니다.
-  // 기존 운영 스케줄은 한국시간 오전 9시(UTC 00:00)입니다.
+  // 초기 실제 생성 테스트와 매일 오전 9시(한국시간) 자동 생성을 함께 사용합니다.
   "triggers": {
     "crons": ["*/5 * * * *", "0 0 * * *"]
   }
