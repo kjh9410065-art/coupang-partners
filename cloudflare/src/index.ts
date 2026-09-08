@@ -43,6 +43,11 @@ const AUTOMATION_KEYWORDS = [
   "컴퓨터 주변기기",
 ];
 
+// 배포 직후 실제 생성이 되는지 확인하기 위한 임시 테스트 Cron입니다.
+// KV에 한 번 실행했다는 기록을 남기므로 여러 번 호출되지 않습니다.
+const INITIAL_TEST_CRON = "*/5 * * * *";
+const INITIAL_TEST_FLAG = "initial-test-attempted";
+
 /** 쿠팡 API 인증에 필요한 HMAC-SHA256 서명을 생성합니다. */
 async function createAuthorization(env: Env, method: string, path: string, query: string) {
   // 쿠팡이 사용하는 UTC 서명 시각입니다.
@@ -437,28 +442,46 @@ export default {
   /**
    * 매일 오전 9시(한국시간)에 실행됩니다.
    * Cron은 UTC 기준이므로 00:00 UTC를 사용합니다.
-   * 생성이 실패하면 예외를 다시 던져 Cloudflare Cron 기록에도 실패가 남도록 합니다.
+   * 배포 직후에는 5분 간격 테스트 Cron도 1회만 실행합니다.
    */
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     const keyword = getDailyKeyword(new Date(controller.scheduledTime));
     const startedAt = new Date().toISOString();
+    const isInitialTest = controller.cron === INITIAL_TEST_CRON;
+
+    // 테스트 Cron은 첫 실행 1회만 허용합니다.
+    if (isInitialTest) {
+      const alreadyAttempted = await env.CONTENT_STORE.get(INITIAL_TEST_FLAG);
+      if (alreadyAttempted) {
+        console.log("초기 자동 생성 테스트는 이미 실행되었습니다.");
+        return;
+      }
+
+      // 실패하더라도 계속 반복 실행되지 않도록 시도 전에 기록합니다.
+      await env.CONTENT_STORE.put(INITIAL_TEST_FLAG, JSON.stringify({
+        attemptedAt: startedAt,
+        keyword,
+      }));
+    }
 
     try {
       const content = await createContent(env, keyword);
 
       await env.CONTENT_STORE.put("last-run", JSON.stringify({
         status: "success",
+        type: isInitialTest ? "initial-test" : "daily",
         keyword,
         storageKey: content.storageKey,
         finishedAt: new Date().toISOString(),
       }));
 
-      console.log("자동 콘텐츠 생성 완료:", content.storageKey);
+      console.log(isInitialTest ? "초기 자동 생성 테스트 완료:" : "자동 콘텐츠 생성 완료:", content.storageKey);
     } catch (error) {
       const message = error instanceof Error ? error.message : "알 수 없는 오류";
 
       await env.CONTENT_STORE.put("last-run", JSON.stringify({
         status: "error",
+        type: isInitialTest ? "initial-test" : "daily",
         keyword,
         startedAt,
         finishedAt: new Date().toISOString(),
