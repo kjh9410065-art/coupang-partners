@@ -1,0 +1,11 @@
+# API 키가 들어 있는 환경변수 파일은 GitHub에 올리지 않습니다.
+.env
+.env.local
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# 생성된 상품 이미지
+images/*
+!images/.gitkeep
