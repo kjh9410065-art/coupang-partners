@@ -2,6 +2,7 @@ import app from "./index";
 import { runBootstrap, type BootstrapEnv } from "./bootstrap";
 import { generateTistoryContent } from "./tistory";
 import { renderCombinedDashboard } from "./dashboard";
+import { renderLandingDashboard } from "./landing";
 import { runManualGenerate } from "./generate";
 import { validateLatestContent } from "./quality-run";
 import { createShortAffiliateLink } from "./affiliate";
@@ -96,7 +97,13 @@ async function attachTistoryAffiliateLink(env: BootstrapEnv, content: any, produ
 const handler = {
   async fetch(request: Request, env: BootstrapEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
-    if (url.pathname === "/") return renderCombinedDashboard(env);
+
+    // 기본 접속 화면은 항상 비워 둡니다.
+    // 저장된 이전 콘텐츠는 ?view=latest를 명시했을 때만 보여줍니다.
+    if (url.pathname === "/") {
+      if (url.searchParams.get("view") !== "latest") return renderLandingDashboard();
+      return renderCombinedDashboard(env);
+    }
 
     if (url.pathname === "/generate-bootstrap") {
       try {
