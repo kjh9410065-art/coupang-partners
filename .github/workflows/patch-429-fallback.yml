@@ -1,0 +1,127 @@
+name: Patch Gemini 429 fallback
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch runtime fallback
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('cloudflare/src/index.ts')
+          s = p.read_text(encoding='utf-8')
+
+          # Workers AI 바인딩 타입을 추가합니다.
+          if '  AI: Ai;' not in s:
+              s = s.replace('  CONTENT_STORE: KVNamespace;\n}', '  CONTENT_STORE: KVNamespace;\n  AI: Ai;\n}', 1)
+
+          start = s.index('async function generateGemini(')
+          end = s.index('/** Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다. */', start)
+
+          replacement = '''async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096): Promise<string> {
+            let lastError = "Gemini 호출 실패";
+
+            // Gemini 무료 한도를 넘은 429는 즉시 대체 AI로 전환합니다.
+            // 불필요하게 여러 모델을 재호출해 같은 한도를 더 소모하지 않습니다.
+            for (const model of GEMINI_MODELS) {
+              for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                  const response = await fetch(`${GEMINI_HOST}/${model}:generateContent`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "x-goog-api-key": env.GEMINI_API_KEY,
+                    },
+                    body: JSON.stringify({
+                      contents: [{ parts: [{ text: prompt }] }],
+                      generationConfig: {
+                        maxOutputTokens,
+                        thinkingConfig: { thinkingLevel: "low" },
+                        responseMimeType: "application/json",
+                      },
+                    }),
+                  });
+
+                  const text = await response.text();
+
+                  // 429 RESOURCE_EXHAUSTED = Gemini 한도 초과이므로 즉시 Workers AI로 갑니다.
+                  if (response.status === 429) {
+                    lastError = `Gemini ${model} 429 RESOURCE_EXHAUSTED`;
+                    break;
+                  }
+
+                  if (response.status === 503) {
+                    lastError = `Gemini ${model} 503`;
+                    continue;
+                  }
+
+                  if (!response.ok) {
+                    throw new Error(`Gemini API 오류 (${response.status}): ${text.slice(0, 500)}`);
+                  }
+
+                  const data = JSON.parse(text);
+                  const output = data?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text ?? "").join("").trim();
+                  if (!output) throw new Error(`Gemini ${model} 응답에 텍스트가 없습니다.`);
+                  return output;
+                } catch (error) {
+                  if (error instanceof Error) lastError = error.message;
+                  if (attempt < 2) continue;
+                  break;
+                }
+              }
+
+              // 429가 발생했으면 다른 Gemini 모델도 호출하지 않습니다.
+              if (lastError.includes('429 RESOURCE_EXHAUSTED')) break;
+            }
+
+            // Gemini 실패 시 Cloudflare Workers AI로 대체 생성합니다.
+            try {
+              const fallback = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+                prompt,
+                max_tokens: Math.min(Math.max(maxOutputTokens, 256), 8192),
+                response_format: { type: "json_object" },
+              });
+
+              const output = typeof fallback === "string"
+                ? fallback
+                : typeof (fallback as any)?.response === "string"
+                  ? (fallback as any).response
+                  : typeof (fallback as any)?.result?.response === "string'
+                    ? (fallback as any).result.response
+                    : "";
+
+              if (output.trim()) return output.trim();
+              throw new Error("Workers AI 응답에 텍스트가 없습니다.");
+            } catch (fallbackError) {
+              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "Workers AI 호출 실패";
+              throw new Error(`${lastError} / Workers AI 대체 생성도 실패: ${fallbackMessage}`);
+            }
+          }
+
+          '''
+
+          # 위 replacement의 오타를 안전하게 제거합니다.
+          replacement = replacement.replace('typeof (fallback as any)?.result?.response === "string\'', 'typeof (fallback as any)?.result?.response === "string"')
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cloudflare/src/index.ts
+          git rm .github/workflows/patch-429-fallback.yml
+          git commit -m 'fix: fallback to Workers AI on Gemini quota errors'
+          git push
