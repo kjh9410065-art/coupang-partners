@@ -23,13 +23,22 @@ function getBlog(post: any) {
   return post?.blog ?? post?.content ?? post ?? {};
 }
 
-/** 저장된 글의 이미지 중 실제 사용 가능한 이미지만 남깁니다. */
+/** 저장된 글에서 공식 상품 이미지를 먼저 확보하고, 관련 이미지를 추가합니다. */
 async function getValidImages(post: any): Promise<string[]> {
   const blog = getBlog(post);
-  const candidates = Array.isArray(blog?.imageUrls) ? blog.imageUrls : (blog?.productImage ? [blog.productImage] : []);
+  // 네이버 결과의 공식 이미지는 recommendation.product 아래에 저장됩니다.
+  const officialImage = post?.recommendation?.product?.productImage ?? blog?.productImage ?? "";
+  const relatedImages = Array.isArray(blog?.imageUrls) ? blog.imageUrls : [];
+  const candidates = [officialImage, ...relatedImages].filter(Boolean);
   const uniqueCandidates = [...new Set(candidates)].slice(0, 3) as string[];
+
   const checked = await Promise.all(uniqueCandidates.map(async (url) => ({ url, valid: await validateImageUrl(url) })));
-  return checked.filter((item) => item.valid).map((item) => item.url);
+  const valid = checked.filter((item) => item.valid).map((item) => item.url);
+
+  // 외부 이미지 서버가 검증 요청을 막는 경우에도 공식 상품 이미지는 표시를 시도합니다.
+  // 관련 없는 이미지를 억지로 넣지는 않습니다.
+  if (!valid.length && officialImage) return [officialImage];
+  return valid;
 }
 
 /** 품질 점수와 실패 사유를 표시할 상태 영역을 만듭니다. */
