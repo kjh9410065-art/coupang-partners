@@ -1,0 +1,147 @@
+name: Patch final content flow
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply final patches
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          # Worker: 수동 생성에도 네이버용 단축 제휴 링크를 붙입니다.
+          p = Path('cloudflare/src/worker.ts')
+          s = p.read_text()
+          old = '''    if (url.pathname === "/generate") {
+      const response = await runManualGenerate(request, env, ctx);
+      if (response.ok) {
+        const headers = new Headers(response.headers);
+        headers.append("Set-Cookie", "show_latest=1; Max-Age=120; Path=/; HttpOnly; SameSite=Lax");
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }
+      return response;
+    }'''
+          new = '''    if (url.pathname === "/generate") {
+      const response = await runManualGenerate(request, env, ctx);
+      if (response.ok) {
+        // 수동 생성도 실제 게시용 네이버 단축 제휴 링크를 붙인 뒤 결과를 저장합니다.
+        const latest = await env.CONTENT_STORE.get("latest", "json") as any;
+        if (latest?.recommendation?.product?.productId) {
+          try {
+            const linked = await attachAffiliateLink(env, latest, "naver");
+            await env.CONTENT_STORE.put("latest", JSON.stringify(linked.record));
+          } catch (error) {
+            // 링크 변환이 실패해도 생성 결과 자체는 보존합니다.
+            console.error("수동 생성 제휴 링크 변환 실패", error);
+          }
+        }
+
+        const headers = new Headers(response.headers);
+        headers.append("Set-Cookie", "show_latest=1; Max-Age=120; Path=/; HttpOnly; SameSite=Lax");
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }
+      return response;
+    }'''
+          if old not in s:
+              raise SystemExit('worker target not found')
+          p.write_text(s.replace(old, new))
+
+          # Landing: 생성 직후 바로 전용 미리보기로 이동합니다.
+          p = Path('cloudflare/src/landing.ts')
+          s = p.read_text()
+          old = "window.location.href='/?view=latest';"
+          new = "window.location.href='/preview';"
+          if old not in s:
+              raise SystemExit('landing target not found')
+          p.write_text(s.replace(old, new))
+
+          # Index: 인사말/끝인사/친근한 말투를 생성 규칙에 추가합니다.
+          p = Path('cloudflare/src/index.ts')
+          s = p.read_text()
+          old = '''- 광고 문구를 늘어놓는 글이 아니라, 사람이 실제로 구매를 고민할 때 도움이 되는 글을 만든다.
+- 상품명만 보고 확정할 수 없는 기능/소재/크기/구성품/성능은 절대 만들어내지 않는다.'''
+          new = '''- 광고 문구를 늘어놓는 글이 아니라, 사람이 실제로 구매를 고민할 때 도움이 되는 글을 만든다.
+- 글의 첫 부분에는 부담스럽지 않은 자연스러운 인사말을 1~2문장 넣는다.
+- 전체 말투는 딱딱한 광고문이 아니라 친한 사람에게 설명하듯 부드럽고 편안한 한국어로 쓴다.
+- 마지막에는 자연스러운 끝인사와 핵심 내용을 정리하는 문장을 넣는다.
+- 과도한 반말, 유행어, 억지 친근함은 피하고 자연스러운 존댓말을 유지한다.
+- 상품명만 보고 확정할 수 없는 기능/소재/크기/구성품/성능은 절대 만들어내지 않는다.'''
+          if old not in s:
+              raise SystemExit('index tone target not found')
+          p.write_text(s.replace(old, new, 1))
+
+          # Dashboard: 제목을 본문과 분리하고 미리보기 버튼을 눈에 띄게 제공합니다.
+          p = Path('cloudflare/src/dashboard.ts')
+          s = p.read_text()
+          old = '''function buildCopyText(post: any): string {
+  const blog = getBlog(post);
+  const title = blog.selectedTitle ?? blog.titles?.[0] ?? "";
+  const disclosure = blog.disclosure ?? "";
+  const body = blog.body ?? "";
+  const partnerUrl = blog.partnerUrl ?? blog.productUrl ?? "";
+  return [title, "", disclosure, "", body, "", "상품 링크", partnerUrl].filter((v) => v !== undefined).join("\\n").trim();
+}'''
+          new = '''function buildCopyText(post: any): string {
+  const blog = getBlog(post);
+  const disclosure = blog.disclosure ?? "";
+  const body = blog.body ?? "";
+  const partnerUrl = blog.partnerUrl ?? blog.productUrl ?? "";
+  // 제목은 별도 칸에서 복사하므로 본문 복사에는 제목을 넣지 않습니다.
+  return [disclosure, "", body, "", "상품 링크", partnerUrl].filter((v) => v !== undefined).join("\\n").trim();
+}'''
+          if old not in s:
+              raise SystemExit('dashboard copy target not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    <h2>${escapeHtml(blog.selectedTitle ?? titles[0] ?? post.keyword ?? "자동 생성 콘텐츠")}</h2>
+    <p class="meta">검색 주제: ${escapeHtml(post.keyword ?? "-")} · 생성: ${escapeHtml(post.savedAt ?? "-")}</p>'''
+          new = '''    <div class="title-box">
+      <div class="title-label">게시 제목</div>
+      <div class="title-value">${escapeHtml(blog.selectedTitle ?? titles[0] ?? post.keyword ?? "자동 생성 콘텐츠")}</div>
+      <button type="button" class="title-copy" onclick="copyContent(${escapeJs(`${platform.toLowerCase()}-title`)},${escapeJs(blog.selectedTitle ?? titles[0] ?? post.keyword ?? "자동 생성 콘텐츠")})">제목 복사</button>
+      <input id="${escapeHtml(`${platform.toLowerCase()}-title`)}" type="hidden" value="${escapeHtml(blog.selectedTitle ?? titles[0] ?? post.keyword ?? "자동 생성 콘텐츠")}">
+    </div>
+    <p class="meta">검색 주제: ${escapeHtml(post.keyword ?? "-")} · 생성: ${escapeHtml(post.savedAt ?? "-")}</p>'''
+          if old not in s:
+              raise SystemExit('dashboard title target not found')
+          s = s.replace(old, new, 1)
+
+          old = '''    ${(blog.partnerUrl || blog.productUrl) ? `<a class="link" href="${escapeHtml(blog.partnerUrl ?? blog.productUrl)}" target="_blank" rel="noopener noreferrer">상품 링크 열기</a>` : ""}'''
+          new = '''    ${(blog.partnerUrl || blog.productUrl) ? `<div class="link-row"><a class="link" href="${escapeHtml(blog.partnerUrl ?? blog.productUrl)}" target="_blank" rel="noopener noreferrer">상품 링크 열기</a><a class="preview-link" href="/preview">미리보기</a></div>` : `<a class="preview-link" href="/preview">미리보기</a>`}'''
+          if old not in s:
+              raise SystemExit('dashboard link target not found')
+          s = s.replace(old, new, 1)
+
+          old = '''.card h2{margin:0 0 7px;font-size:21px}.meta{margin:0 0 10px;color:#6b7280;font-size:12px}.product-name'''
+          new = '''.card h2{margin:0 0 7px;font-size:21px}.title-box{margin:8px 0 12px;padding:14px;border:1px solid #d1d5db;border-radius:11px;background:#fafafa}.title-label{font-size:11px;font-weight:700;color:#6b7280;margin-bottom:5px}.title-value{font-size:19px;font-weight:800;line-height:1.45}.title-copy{margin-top:10px;border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;background:#111827;color:#fff}.meta{margin:0 0 10px;color:#6b7280;font-size:12px}.product-name'''
+          if old not in s:
+              raise SystemExit('dashboard css target not found')
+          s = s.replace(old, new, 1)
+
+          old = '''.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.link{display:inline-block;margin-top:16px;font-weight:700;text-decoration:none}.copy-area'''
+          new = '''.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.link-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px}.link{display:inline-block;font-weight:700;text-decoration:none}.preview-link{display:inline-block;padding:8px 13px;border-radius:9px;background:#eef2ff;color:#3730a3;font-weight:700;text-decoration:none}.copy-area'''
+          if old not in s:
+              raise SystemExit('dashboard link css target not found')
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Commit patches and remove this workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cloudflare/src/worker.ts cloudflare/src/landing.ts cloudflare/src/index.ts cloudflare/src/dashboard.ts
+          git rm .github/workflows/patch-final-content-flow.yml
+          git commit -m 'fix: finalize preview and publishing flow'
+          git push
