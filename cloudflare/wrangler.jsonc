@@ -4,6 +4,11 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-08",
 
+  // Cloudflare Workers AI를 Gemini 장애 시 대체 생성기로 사용합니다.
+  "ai": {
+    "binding": "AI"
+  },
+
   // 생성된 블로그 콘텐츠를 Cloudflare에 저장합니다.
   "kv_namespaces": [
     {
