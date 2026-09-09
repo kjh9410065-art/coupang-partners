@@ -3,6 +3,7 @@ import { runBootstrap, type BootstrapEnv } from "./bootstrap";
 import { generateTistoryContent } from "./tistory";
 import { renderCombinedDashboard } from "./dashboard";
 import { renderLandingDashboard } from "./landing";
+import { renderPreview } from "./preview";
 import { runManualGenerate } from "./generate";
 import { validateLatestContent } from "./quality-run";
 import { createShortAffiliateLink } from "./affiliate";
@@ -21,17 +22,7 @@ function getRunDate(controller: ScheduledController): string { return new Date(c
 function getLatestProduct(record: any) {
   const product = record?.recommendation?.product;
   if (!product?.productId || !product?.productName) return null;
-  return {
-    productId: product.productId,
-    productName: product.productName,
-    productPrice: product.productPrice ?? null,
-    productImage: product.productImage ?? "",
-    productUrl: product.productUrl ?? "",
-    keyword: record.keyword ?? product.keyword ?? "",
-    rank: product.rank ?? null,
-    isRocket: Boolean(product.isRocket),
-    isFreeShipping: Boolean(product.isFreeShipping),
-  };
+  return { productId: product.productId, productName: product.productName, productPrice: product.productPrice ?? null, productImage: product.productImage ?? "", productUrl: product.productUrl ?? "", keyword: record.keyword ?? product.keyword ?? "", rank: product.rank ?? null, isRocket: Boolean(product.isRocket), isFreeShipping: Boolean(product.isFreeShipping) };
 }
 
 /** 티스토리 결과를 KV에 저장합니다. */
@@ -57,24 +48,10 @@ async function saveTistoryTitleHistory(env: BootstrapEnv, titles: unknown) {
 async function attachAffiliateLink(env: BootstrapEnv, record: any, platform: string) {
   const product = record?.recommendation?.product;
   if (!product?.productId) return { record, shortUrl: "" };
-
   const subId = `flick-${platform}-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
   const shortUrl = await createShortAffiliateLink(env, product.productId, subId);
-
-  // 원래 상품 정보는 유지하고, 실제 게시용 링크만 별도로 저장합니다.
-  record.blog = {
-    ...(record.blog ?? {}),
-    partnerUrl: shortUrl,
-    productUrl: shortUrl,
-  };
-  record.affiliate = {
-    ...(record.affiliate ?? {}),
-    originalProductId: product.productId,
-    shortUrl,
-    subId,
-    platform,
-    createdAt: new Date().toISOString(),
-  };
+  record.blog = { ...(record.blog ?? {}), partnerUrl: shortUrl, productUrl: shortUrl };
+  record.affiliate = { ...(record.affiliate ?? {}), originalProductId: product.productId, shortUrl, subId, platform, createdAt: new Date().toISOString() };
   return { record, shortUrl };
 }
 
@@ -83,15 +60,7 @@ async function attachTistoryAffiliateLink(env: BootstrapEnv, content: any, produ
   if (!product?.productId) return { content, shortUrl: "" };
   const subId = `flick-tistory-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
   const shortUrl = await createShortAffiliateLink(env, product.productId, subId);
-  return {
-    content: {
-      ...content,
-      partnerUrl: shortUrl,
-      productUrl: shortUrl,
-      affiliate: { originalProductId: product.productId, shortUrl, subId, platform: "tistory", createdAt: new Date().toISOString() },
-    },
-    shortUrl,
-  };
+  return { content: { ...content, partnerUrl: shortUrl, productUrl: shortUrl, affiliate: { originalProductId: product.productId, shortUrl, subId, platform: "tistory", createdAt: new Date().toISOString() } }, shortUrl };
 }
 
 const handler = {
@@ -99,20 +68,19 @@ const handler = {
     const url = new URL(request.url);
 
     if (url.pathname === "/") {
-      // 평소에는 저장된 글을 전혀 보여주지 않는 빈 시작 화면을 사용합니다.
-      // 생성 직후에는 URL 또는 일회성 쿠키로 최신 결과 화면을 한 번 보여줍니다.
       const showLatest = url.searchParams.get("view") === "latest" || request.headers.get("Cookie")?.includes("show_latest=1");
       if (!showLatest) return renderLandingDashboard();
-
       const response = await renderCombinedDashboard(env);
       if (!url.searchParams.get("view")) {
-        // 수동 생성 직후에만 사용한 쿠키를 바로 삭제해 다음 기본 접속은 다시 빈 화면으로 만듭니다.
         const headers = new Headers(response.headers);
         headers.append("Set-Cookie", "show_latest=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
         return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
       }
       return response;
     }
+
+    // 최신 생성 글을 실제 게시 형태로 확인하는 전용 미리보기 페이지입니다.
+    if (url.pathname === "/preview") return renderPreview(env);
 
     if (url.pathname === "/generate-bootstrap") {
       try {
@@ -126,7 +94,6 @@ const handler = {
     }
 
     if (url.pathname === "/generate") {
-      // 생성 성공 후 대시보드가 / 로 새로고침되어도 방금 생성한 결과만 한 번 표시하도록 합니다.
       const response = await runManualGenerate(request, env, ctx);
       if (response.ok) {
         const headers = new Headers(response.headers);
@@ -148,26 +115,15 @@ const handler = {
   async scheduled(controller: ScheduledController, env: BootstrapEnv, ctx: ExecutionContext) {
     const runDate = getRunDate(controller);
     const lockKey = `${DAILY_LOCK_PREFIX}${runDate}`;
-    if (await env.CONTENT_STORE.get(lockKey)) {
-      console.log(`오늘(${runDate}) 자동 생성이 이미 실행 중이므로 중복 실행을 건너뜁니다.`);
-      return;
-    }
-
+    if (await env.CONTENT_STORE.get(lockKey)) return;
     await env.CONTENT_STORE.put(lockKey, JSON.stringify({ startedAt: new Date().toISOString(), cron: controller.cron }), { expirationTtl: DAILY_LOCK_TTL });
-
     try {
-      // 1. 네이버 콘텐츠를 생성합니다.
       await app.scheduled(controller, env, ctx);
-
-      // 2. 생성 직후 품질을 검사합니다.
       const quality = await validateLatestContent(env);
       if (quality && !quality.ok) {
         await env.CONTENT_STORE.put("last-run:quality", JSON.stringify({ status: "rejected", runDate, quality, finishedAt: new Date().toISOString() }));
-        console.warn(`네이버 콘텐츠 품질 미통과 (${runDate}):`, quality.reasons.join(" / "));
         return;
       }
-
-      // 3. 네이버 전용 SubID로 짧은 제휴 링크를 생성합니다.
       const latest = await env.CONTENT_STORE.get("latest", "json") as any;
       if (latest?.recommendation?.product?.productId) {
         try {
@@ -177,19 +133,14 @@ const handler = {
         } catch (error) {
           const message = error instanceof Error ? error.message : "알 수 없는 오류";
           await env.CONTENT_STORE.put("last-run:affiliate", JSON.stringify({ status: "error", runDate, platform: "naver", message, finishedAt: new Date().toISOString() }));
-          console.error(`쿠팡 네이버 단축 링크 생성 실패 (${runDate}):`, message);
         }
       }
-
       await env.CONTENT_STORE.put("last-run:quality", JSON.stringify({ status: "passed", runDate, quality, finishedAt: new Date().toISOString() }));
-
-      // 4. 품질 검사를 통과한 경우에만 티스토리 생성으로 진행합니다.
       const latestWithLink = await env.CONTENT_STORE.get("latest", "json") as any;
       const product = getLatestProduct(latestWithLink);
       if (product && quality?.ok) {
         try {
           const usedTitles = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
-          // 티스토리는 별도 SubID를 사용해 네이버와 성과를 구분합니다.
           const tistoryContent = await generateTistoryContent(env, product, latestWithLink.keyword ?? product.keyword ?? "", usedTitles ?? []);
           const linkedTistory = await attachTistoryAffiliateLink(env, tistoryContent, product);
           const saved = await saveTistoryContent(env, linkedTistory.content, latestWithLink);
@@ -197,14 +148,9 @@ const handler = {
           await env.CONTENT_STORE.put("last-run:tistory", JSON.stringify({ status: "success", runDate, storageKey: saved.storageKey, shortUrl: linkedTistory.shortUrl, finishedAt: new Date().toISOString() }));
         } catch (error) {
           const message = error instanceof Error ? error.message : "알 수 없는 오류";
-          console.error(`티스토리 자동 생성 실패 (${runDate}):`, message);
           await env.CONTENT_STORE.put("last-run:tistory", JSON.stringify({ status: "error", runDate, message, finishedAt: new Date().toISOString() }));
         }
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "알 수 없는 오류";
-      console.error(`일일 자동 생성 실패 (${runDate}):`, message);
-      throw error;
     } finally {
       await env.CONTENT_STORE.delete(lockKey);
     }
