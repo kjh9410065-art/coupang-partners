@@ -18,6 +18,9 @@ const GEMINI_HOST = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
 const DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.";
 const BOOTSTRAP_LOCK = "bootstrap-generation-completed";
+const USED_PRODUCTS_KEY = "history:products";
+const USED_TITLES_KEY = "history:titles";
+const MAX_HISTORY = 120;
 
 /** 쿠팡 Open API HMAC-SHA256 인증 헤더를 만듭니다. */
 async function auth(env: BootstrapEnv, method: string, path: string, query: string) {
@@ -74,16 +77,25 @@ async function gemini(env: BootstrapEnv, prompt: string, maxOutputTokens = 5000)
 
 /** 검색 결과 중 실제 상품 하나를 선택합니다. */
 async function recommend(env: BootstrapEnv, keyword: string, products: any[]) {
-  const prompt = `너는 쿠팡 파트너스 콘텐츠용 상품 선정 담당자다. 아래는 쿠팡 API 실제 검색 결과다.\n검색어: ${keyword}\n상품 목록: ${JSON.stringify(products.map((p) => ({ productId: p.productId, productName: p.productName, rank: p.rank, isRocket: p.isRocket, isFreeShipping: p.isFreeShipping })))}\n규칙: 검색어와 상품명이 잘 맞고 블로그에서 설명하기 좋은 상품을 고른다. API에 없는 리뷰수, 평점, 인기, 판매량, 기능은 만들지 않는다. 반드시 목록의 productId 하나만 선택한다. JSON만 반환: {"productId":"...","reason":"..."}`;
+  const prices = products.map((p) => Number(p.productPrice)).filter((p) => p > 0).sort((a, b) => a - b);
+  const candidates = products.map((p) => {
+    const price = Number(p.productPrice);
+    const pricePosition = price > 0 ? prices.findIndex((value) => value >= price) + 1 : null;
+    const priceScore = price > 0 && prices.length > 1 ? Math.round((1 - (pricePosition! - 1) / (prices.length - 1)) * 100) : 50;
+    return { ...p, priceScore, pricePosition };
+  });
+
+  const prompt = `너는 쿠팡 파트너스 콘텐츠용 상품 선정 담당자다. 아래는 쿠팡 API 실제 검색 결과다.\n검색어: ${keyword}\n상품 목록: ${JSON.stringify(candidates.map((p) => ({ productId: p.productId, productName: p.productName, price: p.productPrice, priceScore: p.priceScore, rank: p.rank, isRocket: p.isRocket, isFreeShipping: p.isFreeShipping })))}\n\n규칙: 검색어와 상품명이 가장 잘 맞는 상품을 우선하고, 같은 수준의 후보라면 상대 가격 경쟁력과 배송 조건을 고려한다. 비싼 상품도 검색 의도가 강하면 선택할 수 있다. 가격만 싸다고 품질이 좋다고 주장하지 않는다. API에 없는 리뷰수, 평점, 인기, 판매량, 기능은 만들지 않는다. 반드시 목록의 productId 하나만 선택한다. JSON만 반환: {"productId":"...","reason":"..."}`;
   const parsed = JSON.parse((await gemini(env, prompt, 1200)).replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim());
   const product = products.find((p) => String(p.productId) === String(parsed.productId));
   if (!product) throw new Error("AI가 검색 결과에 없는 상품을 선택했습니다.");
-  return { product, reason: parsed.reason ?? "검색어와의 관련성이 높아 선정했습니다." };
+  const scored = candidates.find((p) => String(p.productId) === String(product.productId));
+  return { product: { ...product, priceScore: scored?.priceScore ?? 50 }, reason: parsed.reason ?? "검색어와의 관련성과 가격 경쟁력을 함께 고려해 선정했습니다." };
 }
 
 /** 실제 상품 정보만 사용해 제목 5개와 본문을 생성합니다. */
 async function blog(env: BootstrapEnv, keyword: string, product: any) {
-  const prompt = `너는 한국어 상품 정보 블로그 전문 작가다.\n검색어: ${keyword}\n상품명: ${product.productName}\n로켓배송: ${product.isRocket}\n무료배송: ${product.isFreeShipping}\n작성 규칙: 상품명과 API 확인 정보만 사용한다. API에 없는 기능/소재/크기/배터리/성능/구성품을 만들지 않는다. 실제 사용 경험이나 가짜 리뷰를 쓰지 않는다. 가격/할인/최저가/가성비를 핵심 소재로 삼지 않는다. 과장 광고를 피한다. 제목 5개는 서로 다른 방향으로 만든다. 본문은 충분한 분량의 자연스러운 네이버 블로그 글로 작성한다. 링크와 고지문은 넣지 않는다. JSON만 반환: {"titles":["1","2","3","4","5"],"selectedTitle":"대표 제목","body":"본문"}`;
+  const prompt = `너는 한국어 상품 정보 블로그 전문 작가다.\n검색어: ${keyword}\n상품명: ${product.productName}\n가격: ${product.productPrice ?? "확인 불가"}\n로켓배송: ${product.isRocket}\n무료배송: ${product.isFreeShipping}\n작성 규칙: 상품명과 API 확인 정보만 사용한다. API에 없는 기능/소재/크기/배터리/성능/구성품을 만들지 않는다. 실제 사용 경험이나 가짜 리뷰를 쓰지 않는다. 가격/할인/최저가를 과장하지 않는다. 가성비라는 표현은 근거가 있을 때만 조심스럽게 사용한다. 과장 광고를 피한다. 제목 5개는 서로 다른 방향으로 만든다. 본문은 충분한 분량의 자연스러운 네이버 블로그 글로 작성한다. 링크와 고지문은 넣지 않는다. JSON만 반환: {"titles":["1","2","3","4","5"],"selectedTitle":"대표 제목","body":"본문"}`;
   const parsed = JSON.parse((await gemini(env, prompt)).replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim());
   if (!Array.isArray(parsed.titles) || parsed.titles.length !== 5 || !parsed.selectedTitle || !parsed.body) throw new Error("Gemini 블로그 결과 형식이 올바르지 않습니다.");
   return { disclosure: DISCLOSURE, titles: parsed.titles, selectedTitle: parsed.selectedTitle, body: parsed.body, partnerUrl: product.productUrl };
@@ -94,13 +106,28 @@ export async function runBootstrap(env: BootstrapEnv, keyword = "무선청소기
   if (await env.CONTENT_STORE.get(BOOTSTRAP_LOCK)) throw new Error("이미 1회 생성 테스트가 완료되었습니다.");
   const products = await search(env, keyword);
   if (!products.length) throw new Error("쿠팡 검색 결과가 없습니다.");
-  const recommendation = await recommend(env, keyword, products);
+
+  // 일일 자동 생성과 동일하게 기존 홍보 상품은 초기 테스트에서도 제외합니다.
+  const usedProductIds = await env.CONTENT_STORE.get(USED_PRODUCTS_KEY, "json") as string[] | null;
+  const availableProducts = products.filter((p) => !usedProductIds?.includes(String(p.productId)));
+  if (!availableProducts.length) throw new Error("이번 검색 결과가 모두 과거 홍보 상품입니다.");
+
+  const recommendation = await recommend(env, keyword, availableProducts);
   const generatedBlog = await blog(env, keyword, recommendation.product);
   const now = new Date();
   const record = { savedAt: now.toISOString(), keyword, recommendation, blog: generatedBlog };
   const storageKey = `post:${now.toISOString()}`;
   await env.CONTENT_STORE.put(storageKey, JSON.stringify(record));
   await env.CONTENT_STORE.put("latest", JSON.stringify(record));
+
+  // 초기 테스트에서 선택한 상품과 제목도 정식 중복 방지 이력에 기록합니다.
+  const historyTitles = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
+  const productId = String(recommendation.product.productId);
+  const productHistory = [...(usedProductIds ?? []), productId].slice(-MAX_HISTORY);
+  const titleHistory = [...(historyTitles ?? []), ...generatedBlog.titles].slice(-MAX_HISTORY);
+  await env.CONTENT_STORE.put(USED_PRODUCTS_KEY, JSON.stringify(productHistory));
+  await env.CONTENT_STORE.put(USED_TITLES_KEY, JSON.stringify(titleHistory));
+
   await env.CONTENT_STORE.put(BOOTSTRAP_LOCK, JSON.stringify({ completedAt: now.toISOString(), storageKey }));
   await env.CONTENT_STORE.put("last-run", JSON.stringify({ status: "success", type: "bootstrap", keyword, storageKey, finishedAt: now.toISOString() }));
   return { storageKey, record };
