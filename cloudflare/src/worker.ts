@@ -2,10 +2,11 @@ import app from "./index";
 import { runBootstrap, type BootstrapEnv } from "./bootstrap";
 import { generateTistoryContent } from "./tistory";
 import { renderCombinedDashboard } from "./dashboard";
+import { runManualGenerate } from "./generate";
 
 /**
  * Cloudflare Worker의 최종 진입점입니다.
- * 네이버/티스토리 자동 생성과 통합 대시보드를 연결합니다.
+ * 네이버/티스토리 자동 생성, 통합 대시보드, 수동 생성을 연결합니다.
  */
 const DAILY_LOCK_PREFIX = "lock:daily:";
 const DAILY_LOCK_TTL = 45 * 60;
@@ -67,6 +68,11 @@ const handler = {
         const message = error instanceof Error ? error.message : "알 수 없는 오류";
         return Response.json({ ok: false, message }, { status: 500 });
       }
+    }
+
+    // 실제 자동 생성 파이프라인을 수동으로 실행합니다.
+    if (url.pathname === "/generate") {
+      return runManualGenerate(request, env, ctx);
     }
 
     // 티스토리 최신 결과를 별도로 확인할 수 있습니다.
