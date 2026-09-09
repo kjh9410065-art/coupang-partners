@@ -3,7 +3,6 @@ import { runBootstrap, type BootstrapEnv } from "./bootstrap";
 import { generateTistoryContent } from "./tistory";
 import { renderCombinedDashboard } from "./dashboard";
 import { runManualGenerate } from "./generate";
-import { filterValidImages } from "./image";
 
 /**
  * Cloudflare Worker의 최종 진입점입니다.
@@ -12,6 +11,8 @@ import { filterValidImages } from "./image";
 const DAILY_LOCK_PREFIX = "lock:daily:";
 const DAILY_LOCK_TTL = 45 * 60;
 const TISTORY_LATEST_KEY = "latest:tistory";
+const USED_TITLES_KEY = "history:titles";
+const MAX_TITLE_HISTORY = 120;
 
 /** Cron 실행 시 사용할 날짜 키를 만듭니다. */
 function getRunDate(controller: ScheduledController): string {
@@ -36,37 +37,6 @@ function getLatestProduct(record: any) {
   };
 }
 
-/**
- * 네이버 최신 글에 들어간 이미지 후보를 최종 검증합니다.
- * 이미지가 잘못되었더라도 본문 생성 자체는 유지하고, 검증을 통과한 이미지가 없으면 빈 목록으로 정리합니다.
- */
-async function validateLatestImages(env: BootstrapEnv) {
-  const latest = await env.CONTENT_STORE.get("latest", "json") as any;
-  const imageUrls = latest?.blog?.imageUrls;
-  if (!latest || !latest.blog || !Array.isArray(imageUrls)) return latest;
-
-  // 실제 이미지 응답 + 최소 크기/비율 조건을 통과한 이미지로 교체합니다.
-  const validImages = await filterValidImages(imageUrls, 3);
-  latest.blog.imageUrls = validImages;
-
-  // 대시보드와 /latest가 같은 검증 결과를 사용하도록 최신 기록을 덮어씁니다.
-  if (latest.quality) latest.quality.imageCount = validImages.length;
-  await env.CONTENT_STORE.put("latest", JSON.stringify(latest));
-
-  // 해당 post 기록도 같은 이미지 목록으로 맞춥니다.
-  if (latest.savedAt) {
-    const postKey = `post:${latest.savedAt}`;
-    const savedPost = await env.CONTENT_STORE.get(postKey, "json") as any;
-    if (savedPost?.blog) {
-      savedPost.blog.imageUrls = validImages;
-      if (savedPost.quality) savedPost.quality.imageCount = validImages.length;
-      await env.CONTENT_STORE.put(postKey, JSON.stringify(savedPost));
-    }
-  }
-
-  return latest;
-}
-
 /** 티스토리 결과를 KV에 저장하고 최신 결과 포인터를 갱신합니다. */
 async function saveTistoryContent(env: BootstrapEnv, content: any, sourceRecord: any) {
   const now = new Date();
@@ -81,6 +51,25 @@ async function saveTistoryContent(env: BootstrapEnv, content: any, sourceRecord:
   await env.CONTENT_STORE.put(storageKey, JSON.stringify(record));
   await env.CONTENT_STORE.put(TISTORY_LATEST_KEY, JSON.stringify({ storageKey, ...record }));
   return { storageKey, record };
+}
+
+/**
+ * 티스토리에서 새로 만든 제목도 공용 제목 이력에 기록합니다.
+ * 이렇게 해야 다음 날 네이버 글이 전날 티스토리 제목까지 피할 수 있습니다.
+ */
+async function saveTistoryTitleHistory(env: BootstrapEnv, titles: unknown) {
+  if (!Array.isArray(titles)) return;
+
+  const current = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
+  const validTitles = titles
+    .filter((title): title is string => typeof title === "string" && title.trim().length > 0)
+    .map((title) => title.trim());
+
+  if (!validTitles.length) return;
+
+  // 기존 이력 + 새 제목을 합친 뒤 최근 120개만 유지합니다.
+  const merged = [...(current ?? []), ...validTitles].slice(-MAX_TITLE_HISTORY);
+  await env.CONTENT_STORE.put(USED_TITLES_KEY, JSON.stringify(merged));
 }
 
 const handler = {
@@ -117,7 +106,7 @@ const handler = {
     return app.fetch(request, env, ctx);
   },
 
-  /** 매일 오전 9시에 네이버 → 이미지 검증 → 티스토리 순서로 자동 생성합니다. */
+  /** 매일 오전 9시(한국시간)에 네이버 → 티스토리 순서로 자동 생성합니다. */
   async scheduled(controller: ScheduledController, env: BootstrapEnv, ctx: ExecutionContext) {
     const runDate = getRunDate(controller);
     const lockKey = `${DAILY_LOCK_PREFIX}${runDate}`;
@@ -135,18 +124,19 @@ const handler = {
       // 1. 네이버용 콘텐츠를 먼저 생성합니다.
       await app.scheduled(controller, env, ctx);
 
-      // 2. 생성된 이미지가 실제 이미지인지 최종 검증합니다.
-      await validateLatestImages(env);
-
-      // 3. 방금 생성된 상품을 티스토리 생성에 재사용합니다.
+      // 2. 방금 생성된 상품을 티스토리 생성에 재사용합니다.
       const latest = await env.CONTENT_STORE.get("latest", "json") as any;
       const product = getLatestProduct(latest);
 
       if (product) {
         try {
-          const usedTitles = await env.CONTENT_STORE.get("history:titles", "json") as string[] | null;
+          const usedTitles = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
           const tistoryContent = await generateTistoryContent(env, product, latest.keyword ?? product.keyword ?? "", usedTitles ?? []);
           const saved = await saveTistoryContent(env, tistoryContent, latest);
+
+          // 티스토리 제목도 다음 생성부터 중복 방지에 포함합니다.
+          await saveTistoryTitleHistory(env, tistoryContent.titles);
+
           await env.CONTENT_STORE.put("last-run:tistory", JSON.stringify({ status: "success", runDate, storageKey: saved.storageKey, finishedAt: new Date().toISOString() }));
           console.log(`티스토리 콘텐츠 생성 완료: ${saved.storageKey}`);
         } catch (error) {
