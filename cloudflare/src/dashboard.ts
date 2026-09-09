@@ -78,25 +78,39 @@ function renderCopyArea(post: any, platform: string) {
 
 /** 본문 문단 사이에 실제 확보된 상품 이미지를 배치합니다. */
 function renderBodyWithImages(body: string, images: string[]) {
-  const paragraphs = body.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
+  // 생성 본문이 빈 줄을 사용하지 않아도 이미지가 본문 중간에 들어가도록
+  // 한 줄 단위까지 안전하게 문단을 나눕니다.
+  const paragraphs = body
+    .split(/\n\s*\n|\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
   if (!images.length) return escapeHtml(body);
-  if (!paragraphs.length) return images.map((url, i) => `<img class="body-image" src="${escapeHtml(url)}" alt="상품 이미지 ${i + 1}" loading="lazy">`).join("");
 
   const output: string[] = [];
+  const usedImages = new Set<number>();
+
   paragraphs.forEach((paragraph, index) => {
     output.push(`<p>${escapeHtml(paragraph)}</p>`);
-    // 첫 문단 뒤부터 일정 간격으로 이미지를 넣어 본문 흐름을 유지합니다.
-    const imageIndex = index === 0 ? 0 : index === 2 ? 1 : index === 4 ? 2 : -1;
+
+    // 본문 초반부터 일정한 간격으로 이미지를 배치합니다.
+    const imageIndex = index === 1 ? 0 : index === 4 ? 1 : index === 7 ? 2 : -1;
     if (imageIndex >= 0 && imageIndex < images.length) {
-      output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[imageIndex])}" alt="상품 이미지 ${imageIndex + 1}" loading="lazy"><figcaption>상품 이미지 ${imageIndex + 1}</figcaption></figure>`);
+      usedImages.add(imageIndex);
+      output.push(
+        `<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[imageIndex])}" alt="상품 이미지 ${imageIndex + 1}" loading="lazy"><figcaption>상품 이미지 ${imageIndex + 1}</figcaption></figure>`,
+      );
     }
   });
 
-  // 본문 문단이 적어도 남은 이미지는 버리지 않고 마지막에 한 장씩 추가합니다.
-  for (let i = 0; i < images.length; i++) {
-    if (output.some((item) => item.includes(`상품 이미지 ${i + 1}`))) continue;
-    output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[i])}" alt="상품 이미지 ${i + 1}" loading="lazy"><figcaption>상품 이미지 ${i + 1}</figcaption></figure>`);
-  }
+  // 본문이 짧아서 정해진 위치가 나오지 않아도 확보한 이미지는 모두 표시합니다.
+  images.forEach((url, index) => {
+    if (usedImages.has(index)) return;
+    output.push(
+      `<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(url)}" alt="상품 이미지 ${index + 1}" loading="lazy"><figcaption>상품 이미지 ${index + 1}</figcaption></figure>`,
+    );
+  });
+
   return output.join("");
 }
 
