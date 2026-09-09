@@ -1,8 +1,6 @@
 /**
  * 자동 생성 콘텐츠의 최소 품질을 검사하는 모듈입니다.
- *
- * 글을 저장하기 전에 제목/본문/상품명/금지 표현/반복 여부를 검사합니다.
- * 단 하나라도 품질 조건을 만족하지 못하면 100점이 아니며 통과하지 않습니다.
+ * 90점 이상만 통과하도록 하며, 생성 단계에서 재생성 여부를 판단합니다.
  */
 
 export interface QualityInput {
@@ -39,42 +37,29 @@ const FORBIDDEN_PATTERNS = [
   /대박/i,
 ];
 
-/** 문자열을 비교하기 쉬운 형태로 정규화합니다. */
 function normalize(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^0-9a-z가-힣]+/gi, "")
-    .trim();
+  return value.toLowerCase().replace(/[^0-9a-z가-힣]+/gi, "").trim();
 }
 
-/** 제목 간 유사도가 지나치게 높은지 확인합니다. */
 function titleSimilarity(a: string, b: string) {
   const left = new Set(normalize(a).match(/[가-힣]{2,}|[a-z0-9]{2,}/gi) ?? []);
   const right = new Set(normalize(b).match(/[가-힣]{2,}|[a-z0-9]{2,}/gi) ?? []);
   if (!left.size || !right.size) return 0;
-
   let common = 0;
   for (const token of left) if (right.has(token)) common++;
   return common / Math.max(left.size, right.size);
 }
 
-/** 본문에서 반복되는 긴 구절의 대략적인 개수를 계산합니다. */
 function countRepeatedPhrases(body: string) {
-  const sentences = body
-    .split(/[.!?。！？\n]+/)
-    .map((item) => normalize(item))
-    .filter((item) => item.length >= 18);
-
+  const sentences = body.split(/[.!?。！？\n]+/).map((item) => normalize(item)).filter((item) => item.length >= 18);
   let repeated = 0;
   for (let i = 0; i < sentences.length; i++) {
-    for (let j = i + 1; j < sentences.length; j++) {
-      if (sentences[i] === sentences[j]) repeated++;
-    }
+    for (let j = i + 1; j < sentences.length; j++) if (sentences[i] === sentences[j]) repeated++;
   }
   return repeated;
 }
 
-/** 생성된 콘텐츠의 품질을 엄격하게 검사합니다. */
+/** 생성된 콘텐츠의 품질을 검사합니다. 90점 이상이고 오류가 없어야 통과합니다. */
 export function validateContentQuality(input: QualityInput): QualityResult {
   const titles = Array.isArray(input.titles)
     ? input.titles.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -88,7 +73,6 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   const uniqueTitleCount = new Set(normalizedTitles).size;
   const repeatedPhraseCount = countRepeatedPhrases(body);
   const forbiddenPhraseCount = FORBIDDEN_PATTERNS.reduce((count, pattern) => count + (pattern.test(body) ? 1 : 0), 0);
-
   const normalizedBody = normalize(body);
   const normalizedProduct = normalize(productName);
   const normalizedKeyword = normalize(input.keyword);
@@ -103,12 +87,9 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   if (repeatedPhraseCount > 0) reasons.push("동일한 문장이 반복됩니다.");
   if (forbiddenPhraseCount > 0) reasons.push("금지 또는 과장 표현이 포함되어 있습니다.");
 
-  // 제목끼리 단어 구성이 지나치게 겹치는 경우를 추가 감점합니다.
   let highlySimilarPairs = 0;
   for (let i = 0; i < titles.length; i++) {
-    for (let j = i + 1; j < titles.length; j++) {
-      if (titleSimilarity(titles[i], titles[j]) >= 0.9) highlySimilarPairs++;
-    }
+    for (let j = i + 1; j < titles.length; j++) if (titleSimilarity(titles[i], titles[j]) >= 0.9) highlySimilarPairs++;
   }
   if (highlySimilarPairs > 0) reasons.push("제목 구조가 반복됩니다.");
 
@@ -118,21 +99,13 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   score -= Math.min(20, highlySimilarPairs * 7);
   score -= Math.min(20, repeatedPhraseCount * 10);
   score -= Math.min(30, forbiddenPhraseCount * 10);
-
-  // 검사 사유가 하나라도 있으면 100점이 될 수 없도록 강제합니다.
   if (reasons.length > 0) score = Math.min(99, score);
   score = Math.max(0, Math.round(score));
 
   return {
-    ok: reasons.length === 0 && score === 100,
+    ok: reasons.length === 0 && score >= 90,
     score,
     reasons,
-    metrics: {
-      bodyLength: body.length,
-      titleCount: titles.length,
-      uniqueTitleCount,
-      repeatedPhraseCount,
-      forbiddenPhraseCount,
-    },
+    metrics: { bodyLength: body.length, titleCount: titles.length, uniqueTitleCount, repeatedPhraseCount, forbiddenPhraseCount },
   };
 }
