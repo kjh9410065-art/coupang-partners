@@ -519,13 +519,13 @@ async function createContent(env: Env, keyword: string) {
   const recommendation = await recommendProduct(env, keyword, products, history.productIds);
   const opinionSignals = await fetchOpinionSignals(recommendation.product.productName);
   const imageUrls = await fetchRelatedImages(recommendation.product.productName, recommendation.product.productImage);
-  // 품질 점수가 100점이 될 때까지 생성 결과를 다시 만듭니다.
+  // 품질 점수가 90점 이상이 될 때까지 생성 결과를 다시 만듭니다.
   // 100점 미만인 글은 KV에 저장하지 않으므로 게시 대상으로 넘어갈 수 없습니다.
   let blog: any = null;
   let qualityCheck: any = null;
   let qualityFeedback: string[] = [];
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     blog = await generateBlog(
       env,
       recommendation.product,
@@ -544,14 +544,14 @@ async function createContent(env: Env, keyword: string) {
       body: blog.body,
     });
 
-    if (qualityCheck.ok && qualityCheck.score === 100) break;
+    if (qualityCheck.ok && qualityCheck.score >= 90) break;
 
     qualityFeedback = qualityCheck.reasons.length
       ? qualityCheck.reasons
-      : ["품질 점수를 100점으로 맞추고 모든 제목과 본문의 완성도를 다시 높이세요."];
+      : ["품질 점수를 90점 이상으로 맞추고 모든 제목과 본문의 완성도를 다시 높이세요."];
 
-    if (attempt === 5) {
-      throw new Error(`품질 검사 100점 미달로 저장하지 않았습니다. 현재 점수: ${qualityCheck.score}점 / ${qualityFeedback.join(" · ")}`);
+    if (attempt === 3) {
+      throw new Error(`품질 검사 90점 미달로 저장하지 않았습니다. 현재 점수: ${qualityCheck.score}점 / ${qualityFeedback.join(" · ")}`);
     }
   }
 
@@ -564,10 +564,10 @@ async function createContent(env: Env, keyword: string) {
       opinionSignalCount: opinionSignals.length,
       priceScore: recommendation.priceScore,
       searchRank: recommendation.searchRank,
-      score: 100,
-      passed: true,
-      ok: true,
-      reasons: [],
+      score: qualityCheck.score,
+      passed: qualityCheck.ok,
+      ok: qualityCheck.ok,
+      reasons: qualityCheck.reasons,
       metrics: qualityCheck.metrics,
     },
   };
