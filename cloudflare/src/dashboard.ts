@@ -76,6 +76,30 @@ function renderCopyArea(post: any, platform: string) {
   </div>`;
 }
 
+/** 본문 문단 사이에 실제 확보된 상품 이미지를 배치합니다. */
+function renderBodyWithImages(body: string, images: string[]) {
+  const paragraphs = body.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
+  if (!images.length) return escapeHtml(body);
+  if (!paragraphs.length) return images.map((url, i) => `<img class="body-image" src="${escapeHtml(url)}" alt="상품 이미지 ${i + 1}" loading="lazy">`).join("");
+
+  const output: string[] = [];
+  paragraphs.forEach((paragraph, index) => {
+    output.push(`<p>${escapeHtml(paragraph)}</p>`);
+    // 첫 문단 뒤부터 일정 간격으로 이미지를 넣어 본문 흐름을 유지합니다.
+    const imageIndex = index === 0 ? 0 : index === 2 ? 1 : index === 4 ? 2 : -1;
+    if (imageIndex >= 0 && imageIndex < images.length) {
+      output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[imageIndex])}" alt="상품 이미지 ${imageIndex + 1}" loading="lazy"><figcaption>상품 이미지 ${imageIndex + 1}</figcaption></figure>`);
+    }
+  });
+
+  // 본문 문단이 적어도 남은 이미지는 버리지 않고 마지막에 한 장씩 추가합니다.
+  for (let i = 0; i < images.length; i++) {
+    if (output.some((item) => item.includes(`상품 이미지 ${i + 1}`))) continue;
+    output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[i])}" alt="상품 이미지 ${i + 1}" loading="lazy"><figcaption>상품 이미지 ${i + 1}</figcaption></figure>`);
+  }
+  return output.join("");
+}
+
 /** 저장된 글의 이미지/본문/복사 영역을 카드 형태로 만듭니다. */
 async function renderPost(title: string, post: any, platform: string) {
   if (!post) return `<section class="card empty"><h2>${escapeHtml(title)}</h2><p>아직 생성된 콘텐츠가 없습니다.</p></section>`;
@@ -90,9 +114,8 @@ async function renderPost(title: string, post: any, platform: string) {
     <h2>${escapeHtml(blog.selectedTitle ?? titles[0] ?? post.keyword ?? "자동 생성 콘텐츠")}</h2>
     <p class="meta">검색 주제: ${escapeHtml(post.keyword ?? "-")} · 생성: ${escapeHtml(post.savedAt ?? "-")}</p>
     ${product?.productName ? `<div class="product-name">선정 상품 · ${escapeHtml(product.productName)}</div>` : ""}
-    ${images.length ? `<div class="gallery">${images.map((url: string, i: number) => `<img src="${escapeHtml(url)}" alt="상품 이미지 ${i + 1}" loading="lazy">`).join("")}</div>` : ""}
     <div class="disclosure">${escapeHtml(blog.disclosure ?? "")}</div>
-    <div class="body">${escapeHtml(blog.body ?? "")}</div>
+    <div class="body body-with-images">${renderBodyWithImages(blog.body ?? "", images)}</div>
     ${(blog.partnerUrl || blog.productUrl) ? `<a class="link" href="${escapeHtml(blog.partnerUrl ?? blog.productUrl)}" target="_blank" rel="noopener noreferrer">상품 링크 열기</a>` : ""}
     ${renderCopyArea(post, platform)}
     ${titles.length ? `<details><summary>제목 후보 ${titles.length}개</summary><ol>${titles.map((item: string) => `<li>${escapeHtml(item)}</li>`).join("")}</ol></details>` : ""}
@@ -120,7 +143,7 @@ export async function renderCombinedDashboard(env: DashboardEnv): Promise<Respon
 
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>쿠팡파트너스 자동 콘텐츠</title><style>
-*{box-sizing:border-box}body{margin:0;background:#f4f5f7;color:#202124;font-family:Arial,"Noto Sans KR",sans-serif;line-height:1.65}.wrap{max-width:960px;margin:auto;padding:22px 14px 60px}header{margin-bottom:18px}header h1{margin:0;font-size:27px}header p{margin:5px 0;color:#6b7280;font-size:14px}.actions{display:flex;gap:10px;margin:16px 0}.generate-button{border:0;border-radius:11px;padding:12px 18px;background:#111827;color:#fff;font-size:15px;font-weight:700;cursor:pointer}.generate-button:disabled{opacity:.55;cursor:wait}.generate-status{font-size:13px;color:#6b7280;align-self:center}.status{padding:10px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;font-size:13px;margin-bottom:14px}.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;margin:14px 0;box-shadow:0 2px 10px rgba(0,0,0,.04)}.platform{font-size:12px;font-weight:700;color:#6b7280;letter-spacing:.05em;margin-bottom:4px}.quality{display:inline-block;padding:5px 9px;border-radius:7px;font-size:12px;font-weight:700;margin-bottom:9px}.quality.pass{background:#ecfdf5;color:#047857}.quality.fail{background:#fff1f2;color:#be123c}.quality.unknown{background:#f3f4f6;color:#6b7280}.card h2{margin:0 0 7px;font-size:21px}.meta{margin:0 0 10px;color:#6b7280;font-size:12px}.product-name{font-size:14px;font-weight:600;margin:10px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.gallery img{width:100%;height:190px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.disclosure{padding:10px;background:#f8fafc;border-radius:9px;color:#4b5563;font-size:12px;margin:12px 0}.body{white-space:pre-wrap;font-size:15px}.link{display:inline-block;margin-top:16px;font-weight:700;text-decoration:none}.copy-area{margin-top:20px;padding-top:16px;border-top:1px solid #eee}.copy-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.copy-head button{border:0;border-radius:9px;padding:9px 14px;font-weight:700;cursor:pointer;background:#111827;color:#fff}.copy-help{margin:7px 0;color:#6b7280;font-size:12px}.copy-area textarea{width:100%;min-height:300px;resize:vertical;border:1px solid #d1d5db;border-radius:10px;padding:12px;font:14px/1.7 Arial,"Noto Sans KR",sans-serif;background:#fafafa}.ready,.not-ready{margin-top:8px;font-size:12px;font-weight:700}.ready{color:#047857}.not-ready{color:#b45309}.empty{text-align:center;color:#6b7280;padding:35px}.empty h2{color:#202124}details{margin-top:18px;border-top:1px solid #eee;padding-top:12px}summary{cursor:pointer;font-weight:600}ol{padding-left:22px}@media(max-width:600px){.wrap{padding:18px 10px 40px}.card{padding:16px}.gallery{grid-template-columns:1fr}.gallery img{height:250px}.body{font-size:15px}.copy-area textarea{min-height:360px}.actions{flex-direction:column}.generate-status{align-self:auto}}
+*{box-sizing:border-box}body{margin:0;background:#f4f5f7;color:#202124;font-family:Arial,"Noto Sans KR",sans-serif;line-height:1.65}.wrap{max-width:960px;margin:auto;padding:22px 14px 60px}header{margin-bottom:18px}header h1{margin:0;font-size:27px}header p{margin:5px 0;color:#6b7280;font-size:14px}.actions{display:flex;gap:10px;margin:16px 0}.generate-button{border:0;border-radius:11px;padding:12px 18px;background:#111827;color:#fff;font-size:15px;font-weight:700;cursor:pointer}.generate-button:disabled{opacity:.55;cursor:wait}.generate-status{font-size:13px;color:#6b7280;align-self:center}.status{padding:10px 14px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;font-size:13px;margin-bottom:14px}.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;margin:14px 0;box-shadow:0 2px 10px rgba(0,0,0,.04)}.platform{font-size:12px;font-weight:700;color:#6b7280;letter-spacing:.05em;margin-bottom:4px}.quality{display:inline-block;padding:5px 9px;border-radius:7px;font-size:12px;font-weight:700;margin-bottom:9px}.quality.pass{background:#ecfdf5;color:#047857}.quality.fail{background:#fff1f2;color:#be123c}.quality.unknown{background:#f3f4f6;color:#6b7280}.card h2{margin:0 0 7px;font-size:21px}.meta{margin:0 0 10px;color:#6b7280;font-size:12px}.product-name{font-size:14px;font-weight:600;margin:10px 0}.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.gallery img{width:100%;height:190px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.disclosure{padding:10px;background:#f8fafc;border-radius:9px;color:#4b5563;font-size:12px;margin:12px 0}.body{font-size:15px}.body-with-images p{margin:0 0 16px}.body-image-wrap{margin:18px 0;text-align:center}.body-image{display:block;width:100%;max-height:420px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.link{display:inline-block;margin-top:16px;font-weight:700;text-decoration:none}.copy-area{margin-top:20px;padding-top:16px;border-top:1px solid #eee}.copy-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.copy-head button{border:0;border-radius:9px;padding:9px 14px;font-weight:700;cursor:pointer;background:#111827;color:#fff}.copy-help{margin:7px 0;color:#6b7280;font-size:12px}.copy-area textarea{width:100%;min-height:300px;resize:vertical;border:1px solid #d1d5db;border-radius:10px;padding:12px;font:14px/1.7 Arial,"Noto Sans KR",sans-serif;background:#fafafa}.ready,.not-ready{margin-top:8px;font-size:12px;font-weight:700}.ready{color:#047857}.not-ready{color:#b45309}.empty{text-align:center;color:#6b7280;padding:35px}.empty h2{color:#202124}details{margin-top:18px;border-top:1px solid #eee;padding-top:12px}summary{cursor:pointer;font-weight:600}ol{padding-left:22px}@media(max-width:600px){.wrap{padding:18px 10px 40px}.card{padding:16px}.gallery{grid-template-columns:1fr}.gallery img{height:250px}.body{font-size:15px}.body-with-images p{margin:0 0 16px}.body-image-wrap{margin:18px 0;text-align:center}.body-image{display:block;width:100%;max-height:420px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.copy-area textarea{min-height:360px}.actions{flex-direction:column}.generate-status{align-self:auto}}
 </style></head><body><main class="wrap"><header><h1>쿠팡파트너스 자동 콘텐츠</h1><p>자동 생성 → 품질 검사 → 쿠팡 단축 링크 → 게시 준비 → 복사까지 한 화면에서 처리합니다.</p></header>
 <div class="actions"><button id="generateButton" class="generate-button" type="button" onclick="manualGenerate()">지금 글 1개 생성하기</button><span id="generateStatus" class="generate-status">원할 때만 눌러서 생성할 수 있습니다.</span></div>
 <div class="status"><strong>최근 자동 실행</strong> · ${escapeHtml(status?.status ?? "기록 없음")} · ${escapeHtml(status?.finishedAt ?? "-")}</div>

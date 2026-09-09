@@ -122,7 +122,7 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   score = Math.max(0, Math.round(score));
 
   return {
-    ok: reasons.length === 0 && score >= 75,
+    ok: reasons.length === 0 && score === 100,
     score,
     reasons,
     metrics: {

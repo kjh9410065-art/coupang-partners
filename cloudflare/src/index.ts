@@ -20,6 +20,8 @@ export interface Env {
   CONTENT_STORE: KVNamespace;
 }
 
+import { validateContentQuality } from "./quality";
+
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
 const GEMINI_HOST = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -419,6 +421,7 @@ async function generateBlog(
   usedTitles: string[],
   opinionSignals: string[],
   imageUrls: string[],
+  qualityFeedback: string[] = [],
 ) {
   const opinionText = opinionSignals.length ? opinionSignals.join("\n") : "충분한 공개 의견 신호 없음";
 
@@ -454,6 +457,10 @@ ${JSON.stringify(usedTitles.slice(-60))}
 
 [이미지]
 본문에 자동으로 배치할 이미지가 ${imageUrls.length}장 준비되어 있다. 이미지의 구체적인 기능을 상상하지 말고, 이미지와 본문의 설명이 서로 모순되지 않게 작성한다.
+
+[이전 품질 검사에서 수정이 필요했던 부분]
+${qualityFeedback.length ? qualityFeedback.join("\n") : "첫 생성입니다. 처음부터 완성도 높은 결과를 작성하세요."}
+위 지적사항을 반드시 수정하여 100점 품질을 목표로 다시 작성한다.
 
 JSON만 반환:
 {
@@ -512,7 +519,41 @@ async function createContent(env: Env, keyword: string) {
   const recommendation = await recommendProduct(env, keyword, products, history.productIds);
   const opinionSignals = await fetchOpinionSignals(recommendation.product.productName);
   const imageUrls = await fetchRelatedImages(recommendation.product.productName, recommendation.product.productImage);
-  const blog = await generateBlog(env, recommendation.product, keyword, history.titles, opinionSignals, imageUrls);
+  // 품질 점수가 100점이 될 때까지 생성 결과를 다시 만듭니다.
+  // 100점 미만인 글은 KV에 저장하지 않으므로 게시 대상으로 넘어갈 수 없습니다.
+  let blog: any = null;
+  let qualityCheck: any = null;
+  let qualityFeedback: string[] = [];
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    blog = await generateBlog(
+      env,
+      recommendation.product,
+      keyword,
+      history.titles,
+      opinionSignals,
+      imageUrls,
+      qualityFeedback,
+    );
+
+    qualityCheck = validateContentQuality({
+      keyword,
+      productName: recommendation.product.productName,
+      titles: blog.titles,
+      selectedTitle: blog.selectedTitle,
+      body: blog.body,
+    });
+
+    if (qualityCheck.ok && qualityCheck.score === 100) break;
+
+    qualityFeedback = qualityCheck.reasons.length
+      ? qualityCheck.reasons
+      : ["품질 점수를 100점으로 맞추고 모든 제목과 본문의 완성도를 다시 높이세요."];
+
+    if (attempt === 5) {
+      throw new Error(`품질 검사 100점 미달로 저장하지 않았습니다. 현재 점수: ${qualityCheck.score}점 / ${qualityFeedback.join(" · ")}`);
+    }
+  }
 
   const content = {
     keyword,
@@ -523,6 +564,11 @@ async function createContent(env: Env, keyword: string) {
       opinionSignalCount: opinionSignals.length,
       priceScore: recommendation.priceScore,
       searchRank: recommendation.searchRank,
+      score: 100,
+      passed: true,
+      ok: true,
+      reasons: [],
+      metrics: qualityCheck.metrics,
     },
   };
 
