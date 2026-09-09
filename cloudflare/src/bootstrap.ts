@@ -75,6 +75,21 @@ async function gemini(env: BootstrapEnv, prompt: string, maxOutputTokens = 5000)
   throw new Error(lastError);
 }
 
+/** 검색어에 맞는 정도를 상품명에서 간단히 계산합니다. */
+function relevanceScore(keyword: string, productName: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, "");
+  const target = normalize(keyword);
+  const name = normalize(productName);
+  if (!target || !name) return 0;
+  if (name.includes(target)) return 100;
+
+  // 검색어가 여러 단어라면 포함된 단어 비율로 관련성을 계산합니다.
+  const words = keyword.toLowerCase().split(/\s+/).filter((word) => word.length >= 2);
+  if (!words.length) return 0;
+  const matched = words.filter((word) => name.includes(word)).length;
+  return Math.round((matched / words.length) * 100);
+}
+
 /** 검색 결과 중 실제 상품 하나를 선택합니다. */
 async function recommend(env: BootstrapEnv, keyword: string, products: any[]) {
   const prices = products.map((p) => Number(p.productPrice)).filter((p) => p > 0).sort((a, b) => a - b);
@@ -82,15 +97,49 @@ async function recommend(env: BootstrapEnv, keyword: string, products: any[]) {
     const price = Number(p.productPrice);
     const pricePosition = price > 0 ? prices.findIndex((value) => value >= price) + 1 : null;
     const priceScore = price > 0 && prices.length > 1 ? Math.round((1 - (pricePosition! - 1) / (prices.length - 1)) * 100) : 50;
-    return { ...p, priceScore, pricePosition };
-  });
+    const relevance = relevanceScore(keyword, p.productName);
+    const rank = Number(p.rank) || 10;
+    const rankScore = Math.max(0, 100 - ((rank - 1) / 9) * 100);
+    const shippingScore = p.isRocket && p.isFreeShipping ? 100 : p.isRocket || p.isFreeShipping ? 70 : 40;
+    // 검색어 관련성을 가장 강하게 반영하고, 가격과 배송은 보조 기준으로 사용합니다.
+    const totalScore = Math.round(relevance * 0.50 + rankScore * 0.25 + priceScore * 0.15 + shippingScore * 0.10);
+    return { ...p, relevance, priceScore, pricePosition, rankScore: Math.round(rankScore), shippingScore, totalScore };
+  }).sort((a, b) => b.totalScore - a.totalScore);
 
-  const prompt = `너는 쿠팡 파트너스 콘텐츠용 상품 선정 담당자다. 아래는 쿠팡 API 실제 검색 결과다.\n검색어: ${keyword}\n상품 목록: ${JSON.stringify(candidates.map((p) => ({ productId: p.productId, productName: p.productName, price: p.productPrice, priceScore: p.priceScore, rank: p.rank, isRocket: p.isRocket, isFreeShipping: p.isFreeShipping })))}\n\n규칙: 검색어와 상품명이 가장 잘 맞는 상품을 우선하고, 같은 수준의 후보라면 상대 가격 경쟁력과 배송 조건을 고려한다. 비싼 상품도 검색 의도가 강하면 선택할 수 있다. 가격만 싸다고 품질이 좋다고 주장하지 않는다. API에 없는 리뷰수, 평점, 인기, 판매량, 기능은 만들지 않는다. 반드시 목록의 productId 하나만 선택한다. JSON만 반환: {"productId":"...","reason":"..."}`;
-  const parsed = JSON.parse((await gemini(env, prompt, 1200)).replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim());
-  const product = products.find((p) => String(p.productId) === String(parsed.productId));
-  if (!product) throw new Error("AI가 검색 결과에 없는 상품을 선택했습니다.");
-  const scored = candidates.find((p) => String(p.productId) === String(product.productId));
-  return { product: { ...product, priceScore: scored?.priceScore ?? 50 }, reason: parsed.reason ?? "검색어와의 관련성과 가격 경쟁력을 함께 고려해 선정했습니다." };
+  // AI에는 점수가 높은 상위 5개만 전달해 엉뚱한 후보 선택 가능성을 줄입니다.
+  const topCandidates = candidates.slice(0, 5);
+  const prompt = `너는 쿠팡 파트너스 콘텐츠용 상품 선정 담당자다. 아래는 쿠팡 API 실제 검색 결과를 점수화한 상위 후보들이다.
+검색어: ${keyword}
+상품 목록: ${JSON.stringify(topCandidates.map((p) => ({ productId: p.productId, productName: p.productName, price: p.productPrice, relevance: p.relevance, rank: p.rank, rankScore: p.rankScore, priceScore: p.priceScore, shippingScore: p.shippingScore, totalScore: p.totalScore, isRocket: p.isRocket, isFreeShipping: p.isFreeShipping })))}
+
+선정 규칙:
+1. 검색어와 상품명의 실제 관련성을 최우선으로 본다.
+2. totalScore는 참고용이며 관련성이 낮은 상품을 단순히 가격이 싸다는 이유로 고르지 않는다.
+3. 검색 순위는 실제 API 결과의 rank를 참고한다.
+4. 가격은 같은 검색 결과 안에서의 상대적 가격으로만 참고한다.
+5. 배송 조건은 보조 기준이다.
+6. API에 없는 판매량, 리뷰 수, 평점, 할인율, 인기 순위, 기능은 만들지 않는다.
+7. 반드시 위 후보 목록에 존재하는 productId 하나만 선택한다.
+JSON만 반환: {"productId":"선택한상품ID","reason":"선정 이유"}`;
+
+  let selectedId = "";
+  let reason = "";
+  try {
+    const parsed = JSON.parse((await gemini(env, prompt, 1200)).replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim());
+    selectedId = String(parsed.productId ?? "");
+    reason = parsed.reason ?? "";
+  } catch {
+    // AI 선택이 실패해도 검색 자체는 실패하지 않도록 점수 1위 상품으로 안전하게 대체합니다.
+  }
+
+  const selected = topCandidates.find((product) => String(product.productId) === selectedId) ?? topCandidates[0];
+  if (!selected) throw new Error("선택 가능한 상품이 없습니다.");
+
+  return {
+    product: selected,
+    reason: reason || "검색어 관련성을 가장 우선하고 검색 순위·상대 가격·배송 조건을 함께 고려해 선정했습니다.",
+    priceScore: selected.priceScore,
+  };
 }
 
 /** 실제 상품 정보만 사용해 제목 5개와 본문을 생성합니다. */
