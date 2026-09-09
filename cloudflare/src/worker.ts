@@ -98,11 +98,20 @@ const handler = {
   async fetch(request: Request, env: BootstrapEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
 
-    // 기본 접속 화면은 항상 비워 둡니다.
-    // 저장된 이전 콘텐츠는 ?view=latest를 명시했을 때만 보여줍니다.
     if (url.pathname === "/") {
-      if (url.searchParams.get("view") !== "latest") return renderLandingDashboard();
-      return renderCombinedDashboard(env);
+      // 평소에는 저장된 글을 전혀 보여주지 않는 빈 시작 화면을 사용합니다.
+      // 생성 직후에는 URL 또는 일회성 쿠키로 최신 결과 화면을 한 번 보여줍니다.
+      const showLatest = url.searchParams.get("view") === "latest" || request.headers.get("Cookie")?.includes("show_latest=1");
+      if (!showLatest) return renderLandingDashboard();
+
+      const response = await renderCombinedDashboard(env);
+      if (!url.searchParams.get("view")) {
+        // 수동 생성 직후에만 사용한 쿠키를 바로 삭제해 다음 기본 접속은 다시 빈 화면으로 만듭니다.
+        const headers = new Headers(response.headers);
+        headers.append("Set-Cookie", "show_latest=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }
+      return response;
     }
 
     if (url.pathname === "/generate-bootstrap") {
@@ -116,7 +125,16 @@ const handler = {
       }
     }
 
-    if (url.pathname === "/generate") return runManualGenerate(request, env, ctx);
+    if (url.pathname === "/generate") {
+      // 생성 성공 후 대시보드가 / 로 새로고침되어도 방금 생성한 결과만 한 번 표시하도록 합니다.
+      const response = await runManualGenerate(request, env, ctx);
+      if (response.ok) {
+        const headers = new Headers(response.headers);
+        headers.append("Set-Cookie", "show_latest=1; Max-Age=120; Path=/; HttpOnly; SameSite=Lax");
+        return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+      }
+      return response;
+    }
 
     if (url.pathname === "/latest-tistory") {
       const latest = await env.CONTENT_STORE.get(TISTORY_LATEST_KEY, "json");
