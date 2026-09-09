@@ -1,4 +1,4 @@
-name: one-time offline fallback patch
+name: one-time offline generation patch
 
 on:
   push:
@@ -13,23 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Patch deterministic fallback
+      - name: Replace AI generator with safe fallback
         shell: python
         run: |
           from pathlib import Path
+          import re
           from textwrap import dedent
 
           path = Path("cloudflare/src/index.ts")
           text = path.read_text(encoding="utf-8")
-          marker = "/** Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다. */"
 
-          fallback = dedent(r'''
+          pattern = r'async function generateGemini\(env: Env, prompt: string, maxOutputTokens = 4096\): Promise<string> \{[\s\S]*?\n\}\n\n/\*\* Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다\. \*/'
+
+          replacement = dedent(r'''
           /**
-           * 외부 AI 한도가 모두 소진된 경우 사용하는 안전한 오프라인 생성기입니다.
-           * 상품 API에서 확인된 정보만 사용해 존재하지 않는 상품 정보를 만들지 않습니다.
+           * 외부 AI 무료 한도가 소진된 동안 사용하는 안전한 생성기입니다.
+           * 쿠팡 API에서 확인된 값만 사용하며, 임의의 상품 기능이나 스펙을 만들지 않습니다.
            */
-          function generateOfflineFallback(prompt: string): string {
-            // 상품 선정 단계: 후보 목록의 첫 상품을 사용합니다.
+          async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096): Promise<string> {
+            // 상품 선정 단계에서는 쿠팡 검색 후보 중 첫 번째 상품을 선택합니다.
             if (prompt.includes("상품 후보:")) {
               const match = prompt.match(/상품 후보:\s*([\s\S]*?)\n\n공개 웹 검색/);
               if (match) {
@@ -46,7 +48,7 @@ jobs:
               }
             }
 
-            // 트렌드 AI 호출 실패 시 안전한 상품 검색어를 사용합니다.
+            // 오늘의 검색어 선정 단계에서는 안전한 상품군을 사용합니다.
             if (prompt.includes("Google Trends 한국 급상승 검색어 원문")) {
               return JSON.stringify({
                 keyword: "무선청소기",
@@ -55,7 +57,7 @@ jobs:
               });
             }
 
-            // 블로그 생성 단계: API에서 확인된 값만 본문에 넣습니다.
+            // 본문 생성 단계에서는 프롬프트에 들어온 확인값만 사용합니다.
             if (prompt.includes("[확인된 상품 정보]")) {
               const keyword = prompt.match(/검색 주제:\s*(.+)/)?.[1]?.trim() || "상품 정보";
               const productName = prompt.match(/상품명:\s*(.+)/)?.[1]?.trim() || keyword;
@@ -90,11 +92,7 @@ ${productName}은 현재 쿠팡 상품 검색 결과에서 확인된 상품입�
 
 관심이 있다면 아래 상품 확인 버튼을 통해 현재 판매 페이지의 최신 정보를 직접 확인해보세요. 오늘은 여기까지 간단하게 정리해봤습니다. 필요한 조건을 하나씩 비교해보면서 본인에게 맞는 상품인지 천천히 확인해보시면 좋겠습니다.`;
 
-              return JSON.stringify({
-                titles,
-                selectedTitle: titles[0],
-                body
-              });
+              return JSON.stringify({ titles, selectedTitle: titles[0], body });
             }
 
             return JSON.stringify({
@@ -103,25 +101,21 @@ ${productName}은 현재 쿠팡 상품 검색 결과에서 확인된 상품입�
               reason: "외부 AI 한도 초과 시 안전한 기본값을 사용합니다."
             });
           }
+
+          /** Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다. */
           ''').lstrip()
 
-          if "function generateOfflineFallback(prompt: string)" not in text:
-              if marker not in text:
-                  raise SystemExit("삽입 위치를 찾지 못했습니다.")
-              text = text.replace(marker, fallback + "\n" + marker, 1)
+          new_text, count = re.subn(pattern, replacement, text, count=1)
+          if count != 1:
+              raise SystemExit("generateGemini 교체 대상을 찾지 못했습니다.")
+          path.write_text(new_text, encoding="utf-8")
 
-          old = '    throw new Error(`${lastError} / Workers AI 대체 생성도 실패: ${fallbackMessage}`);'
-          new = '    console.warn(`${lastError} / Workers AI 대체 생성도 실패: ${fallbackMessage} / 오프라인 안전 생성기로 전환합니다.`);\n    return generateOfflineFallback(prompt);'
-          if old not in text:
-              raise SystemExit("Workers AI 실패 처리 대상을 찾지 못했습니다.")
-          text = text.replace(old, new, 1)
-          path.write_text(text, encoding="utf-8")
-
-      - name: Commit and remove workflow
+      - name: Remove one-time workflow
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/patch-offline-fallback.yml
           git add cloudflare/src/index.ts
-          git commit -m "fix: use offline fallback when AI quotas are exhausted"
+          git commit -m "fix: deterministic content generation while AI quotas are exhausted"
+          git rm .github/workflows/patch-offline-fallback.yml
+          git commit -m "chore: remove one-time offline generation workflow"
           git push
