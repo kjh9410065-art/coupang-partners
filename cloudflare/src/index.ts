@@ -18,6 +18,7 @@ export interface Env {
   COUPANG_SECRET_KEY: string;
   GEMINI_API_KEY: string;
   CONTENT_STORE: KVNamespace;
+  AI: Ai;
 }
 
 import { validateContentQuality } from "./quality";
@@ -109,8 +110,10 @@ async function searchProducts(env: Env, keyword: string) {
 async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096): Promise<string> {
   let lastError = "Gemini 호출 실패";
 
+  // Gemini 무료 한도를 넘은 429는 즉시 대체 AI로 전환합니다.
+  // 불필요하게 여러 모델을 재호출해 같은 한도를 더 소모하지 않습니다.
   for (const model of GEMINI_MODELS) {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await fetch(`${GEMINI_HOST}/${model}:generateContent`, {
           method: "POST",
@@ -129,11 +132,21 @@ async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096):
         });
 
         const text = await response.text();
+
+        // 429 RESOURCE_EXHAUSTED = Gemini 한도 초과이므로 즉시 Workers AI로 갑니다.
+        if (response.status === 429) {
+          lastError = `Gemini ${model} 429 RESOURCE_EXHAUSTED`;
+          break;
+        }
+
         if (response.status === 503) {
           lastError = `Gemini ${model} 503`;
           continue;
         }
-        if (!response.ok) throw new Error(`Gemini API 오류 (${response.status}): ${text.slice(0, 500)}`);
+
+        if (!response.ok) {
+          throw new Error(`Gemini API 오류 (${response.status}): ${text.slice(0, 500)}`);
+        }
 
         const data = JSON.parse(text);
         const output = data?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text ?? "").join("").trim();
@@ -141,13 +154,37 @@ async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096):
         return output;
       } catch (error) {
         if (error instanceof Error) lastError = error.message;
-        if (attempt < 3) continue;
+        if (attempt < 2) continue;
         break;
       }
     }
+
+    // 429가 발생했으면 다른 Gemini 모델도 호출하지 않습니다.
+    if (lastError.includes('429 RESOURCE_EXHAUSTED')) break;
   }
 
-  throw new Error(lastError);
+  // Gemini 실패 시 Cloudflare Workers AI로 대체 생성합니다.
+  try {
+    const fallback = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+      prompt,
+      max_tokens: Math.min(Math.max(maxOutputTokens, 256), 8192),
+      response_format: { type: "json_object" },
+    });
+
+    const output = typeof fallback === "string"
+      ? fallback
+      : typeof (fallback as any)?.response === "string"
+        ? (fallback as any).response
+        : typeof (fallback as any)?.result?.response === "string"
+          ? (fallback as any).result.response
+          : "";
+
+    if (output.trim()) return output.trim();
+    throw new Error("Workers AI 응답에 텍스트가 없습니다.");
+  } catch (fallbackError) {
+    const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "Workers AI 호출 실패";
+    throw new Error(`${lastError} / Workers AI 대체 생성도 실패: ${fallbackMessage}`);
+  }
 }
 
 /** Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다. */
