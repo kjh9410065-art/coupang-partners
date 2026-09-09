@@ -1,0 +1,130 @@
+name: Fix quality and body images
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch worker
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path("cloudflare/src")
+          index = root / "index.ts"
+          dashboard = root / "dashboard.ts"
+          quality = root / "quality.ts"
+
+          # -----------------------------
+          # 1) 품질 검사: 100점만 통과하도록 변경
+          # -----------------------------
+          q = quality.read_text(encoding="utf-8")
+          q = q.replace(
+              "ok: reasons.length === 0 && score >= 75,",
+              "ok: reasons.length === 0 && score === 100,",
+          )
+          q = q.replace(
+              "score >= 75",
+              "score === 100",
+          )
+          quality.write_text(q, encoding="utf-8")
+
+          # -----------------------------
+          # 2) index.ts에 품질 검사를 '저장 전'에 강제
+          #    100점이 될 때까지 최대 5회 생성하고,
+          #    끝까지 100점이 아니면 저장하지 않습니다.
+          # -----------------------------
+          s = index.read_text(encoding="utf-8")
+          if 'import { validateContentQuality } from "./quality";' not in s:
+              s = s.replace(
+                  'const COUPANG_HOST = "https://api-gateway.coupang.com";',
+                  'import { validateContentQuality } from "./quality";\n\nconst COUPANG_HOST = "https://api-gateway.coupang.com";',
+                  1,
+              )
+
+          old_call = '''  const blog = await generateBlog(env, recommendation.product, keyword, history.titles, opinionSignals, imageUrls);\n\n  const content = {\n    keyword,\n    recommendation,\n    blog,\n    quality: {\n      imageCount: imageUrls.length,\n      opinionSignalCount: opinionSignals.length,\n      priceScore: recommendation.priceScore,\n      searchRank: recommendation.searchRank,\n    },\n  };'''
+
+          new_call = '''  // 품질 점수가 100점이 될 때까지 생성 결과를 다시 만듭니다.\n  // 100점 미만인 글은 KV에 저장하지 않으므로 게시 대상으로 넘어갈 수 없습니다.\n  let blog: any = null;\n  let qualityCheck: any = null;\n  let qualityFeedback: string[] = [];\n\n  for (let attempt = 1; attempt <= 5; attempt++) {\n    blog = await generateBlog(\n      env,\n      recommendation.product,\n      keyword,\n      history.titles,\n      opinionSignals,\n      imageUrls,\n      qualityFeedback,\n    );\n\n    qualityCheck = validateContentQuality({\n      keyword,\n      productName: recommendation.product.productName,\n      titles: blog.titles,\n      selectedTitle: blog.selectedTitle,\n      body: blog.body,\n    });\n\n    if (qualityCheck.ok && qualityCheck.score === 100) break;\n\n    qualityFeedback = qualityCheck.reasons.length\n      ? qualityCheck.reasons\n      : ["품질 점수를 100점으로 맞추고 모든 제목과 본문의 완성도를 다시 높이세요."];\n\n    if (attempt === 5) {\n      throw new Error(`품질 검사 100점 미달로 저장하지 않았습니다. 현재 점수: ${qualityCheck.score}점 / ${qualityFeedback.join(" · ")}`);\n    }\n  }\n\n  const content = {\n    keyword,\n    recommendation,\n    blog,\n    quality: {\n      imageCount: imageUrls.length,\n      opinionSignalCount: opinionSignals.length,\n      priceScore: recommendation.priceScore,\n      searchRank: recommendation.searchRank,\n      score: 100,\n      passed: true,\n      ok: true,\n      reasons: [],\n      metrics: qualityCheck.metrics,\n    },\n  };'''
+
+          if old_call not in s:
+              raise SystemExit("index.ts: createContent 대상 코드가 예상과 다릅니다.")
+          s = s.replace(old_call, new_call, 1)
+
+          # generateBlog에 품질 재생성 피드백 인자를 추가합니다.
+          old_sig = '''  imageUrls: string[],\n) {'''
+          new_sig = '''  imageUrls: string[],\n  qualityFeedback: string[] = [],\n) {'''
+          if old_sig not in s:
+              raise SystemExit("index.ts: generateBlog 시그니처를 찾지 못했습니다.")
+          s = s.replace(old_sig, new_sig, 1)
+
+          marker = '''[이미지]\n본문에 자동으로 배치할 이미지가 ${imageUrls.length}장 준비되어 있다. 이미지의 구체적인 기능을 상상하지 말고, 이미지와 본문의 설명이 서로 모순되지 않게 작성한다.'''
+          replacement = '''[이미지]\n본문에 자동으로 배치할 이미지가 ${imageUrls.length}장 준비되어 있다. 이미지의 구체적인 기능을 상상하지 말고, 이미지와 본문의 설명이 서로 모순되지 않게 작성한다.\n\n[이전 품질 검사에서 수정이 필요했던 부분]\n${qualityFeedback.length ? qualityFeedback.join("\\n") : "첫 생성입니다. 처음부터 완성도 높은 결과를 작성하세요."}\n위 지적사항을 반드시 수정하여 100점 품질을 목표로 다시 작성한다.'''
+          if marker not in s:
+              raise SystemExit("index.ts: 이미지 프롬프트 위치를 찾지 못했습니다.")
+          s = s.replace(marker, replacement, 1)
+          index.write_text(s, encoding="utf-8")
+
+          # -----------------------------
+          # 3) dashboard.ts: 이미지를 '본문 안'에 배치
+          # -----------------------------
+          d = dashboard.read_text(encoding="utf-8")
+
+          helper_marker = '''/** 저장된 글의 이미지/본문/복사 영역을 카드 형태로 만듭니다. */\nasync function renderPost'''
+          helper = '''/** 본문 문단 사이에 실제 확보된 상품 이미지를 배치합니다. */\nfunction renderBodyWithImages(body: string, images: string[]) {\n  const paragraphs = body.split(/\\n\\s*\\n/).map((item) => item.trim()).filter(Boolean);\n  if (!images.length) return escapeHtml(body);\n  if (!paragraphs.length) return images.map((url, i) => `<img class="body-image" src="${escapeHtml(url)}" alt="상품 이미지 ${i + 1}" loading="lazy">`).join("");\n\n  const output: string[] = [];\n  paragraphs.forEach((paragraph, index) => {\n    output.push(`<p>${escapeHtml(paragraph)}</p>`);\n    // 첫 문단 뒤부터 일정 간격으로 이미지를 넣어 본문 흐름을 유지합니다.\n    const imageIndex = index === 0 ? 0 : index === 2 ? 1 : index === 4 ? 2 : -1;\n    if (imageIndex >= 0 && imageIndex < images.length) {\n      output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[imageIndex])}" alt="상품 이미지 ${imageIndex + 1}" loading="lazy"><figcaption>상품 이미지 ${imageIndex + 1}</figcaption></figure>`);\n    }\n  });\n\n  // 본문 문단이 적어도 남은 이미지는 버리지 않고 마지막에 한 장씩 추가합니다.\n  for (let i = 0; i < images.length; i++) {\n    if (output.some((item) => item.includes(`상품 이미지 ${i + 1}`))) continue;\n    output.push(`<figure class="body-image-wrap"><img class="body-image" src="${escapeHtml(images[i])}" alt="상품 이미지 ${i + 1}" loading="lazy"><figcaption>상품 이미지 ${i + 1}</figcaption></figure>`);\n  }\n  return output.join("");\n}\n\n/** 저장된 글의 이미지/본문/복사 영역을 카드 형태로 만듭니다. */\nasync function renderPost'''
+          if helper_marker not in d:
+              raise SystemExit("dashboard.ts: renderPost 위치를 찾지 못했습니다.")
+          d = d.replace(helper_marker, helper, 1)
+
+          old_render = '''    ${images.length ? `<div class="gallery">${images.map((url: string, i: number) => `<img src="${escapeHtml(url)}" alt="상품 이미지 ${i + 1}" loading="lazy">`).join("")}</div>` : ""}\n    <div class="disclosure">${escapeHtml(blog.disclosure ?? "")}</div>\n    <div class="body">${escapeHtml(blog.body ?? "")}</div>'''
+          new_render = '''    <div class="disclosure">${escapeHtml(blog.disclosure ?? "")}</div>\n    <div class="body body-with-images">${renderBodyWithImages(blog.body ?? "", images)}</div>'''
+          if old_render not in d:
+              raise SystemExit("dashboard.ts: 본문 렌더링 대상을 찾지 못했습니다.")
+          d = d.replace(old_render, new_render, 1)
+
+          # 기존 본문 전용 스타일을 이미지가 섞인 HTML에 맞게 교체합니다.
+          d = d.replace(
+              '.body{white-space:pre-wrap;font-size:15px}',
+              '.body{font-size:15px}.body-with-images p{margin:0 0 16px}.body-image-wrap{margin:18px 0;text-align:center}.body-image{display:block;width:100%;max-height:420px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}',
+              1,
+          )
+          d = d.replace(
+              '.body{font-size:15px}.copy-area',
+              '.body{font-size:15px}.body-with-images p{margin:0 0 16px}.body-image-wrap{margin:18px 0;text-align:center}.body-image{display:block;width:100%;max-height:420px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.copy-area',
+              1,
+          )
+          d = d.replace(
+              '.body{font-size:15px}.copy-area',
+              '.body{font-size:15px}.body-with-images p{margin:0 0 16px}.body-image-wrap{margin:18px 0;text-align:center}.body-image{display:block;width:100%;max-height:420px;object-fit:contain;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.body-image-wrap figcaption{margin-top:5px;color:#6b7280;font-size:11px}.copy-area',
+              1,
+          )
+          # 모바일에서 본문 이미지를 크게 보여줍니다.
+          d = d.replace(
+              '.body{font-size:15px}.copy-area textarea',
+              '.body{font-size:15px}.body-image{max-height:520px}.copy-area textarea',
+              1,
+          )
+
+          dashboard.write_text(d, encoding="utf-8")
+
+          # -----------------------------
+          # 4) 임시 패치 워크플로는 성공 후 스스로 삭제합니다.
+          # -----------------------------
+          workflow = Path(".github/workflows/fix-quality-images.yml")
+          workflow.unlink(missing_ok=True)
+
+          import subprocess
+          subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+          subprocess.run(["git", "add", "cloudflare/src/index.ts", "cloudflare/src/dashboard.ts", "cloudflare/src/quality.ts", ".github/workflows/fix-quality-images.yml"], check=True)
+          subprocess.run(["git", "commit", "-m", "생성 콘텐츠는 품질 100점만 저장하고 본문에 이미지 배치"], check=True)
+          subprocess.run(["git", "push", "origin", "main"], check=True)
