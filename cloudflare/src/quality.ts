@@ -2,7 +2,7 @@
  * 자동 생성 콘텐츠의 최소 품질을 검사하는 모듈입니다.
  *
  * 글을 저장하기 전에 제목/본문/상품명/금지 표현/반복 여부를 검사합니다.
- * 검사에 실패하면 저장하지 않고 상위 생성 로직에서 재처리할 수 있도록 합니다.
+ * 단 하나라도 품질 조건을 만족하지 못하면 100점이 아니며 통과하지 않습니다.
  */
 
 export interface QualityInput {
@@ -74,7 +74,7 @@ function countRepeatedPhrases(body: string) {
   return repeated;
 }
 
-/** 생성된 콘텐츠의 기본 품질을 검사합니다. */
+/** 생성된 콘텐츠의 품질을 엄격하게 검사합니다. */
 export function validateContentQuality(input: QualityInput): QualityResult {
   const titles = Array.isArray(input.titles)
     ? input.titles.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
@@ -89,7 +89,6 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   const repeatedPhraseCount = countRepeatedPhrases(body);
   const forbiddenPhraseCount = FORBIDDEN_PATTERNS.reduce((count, pattern) => count + (pattern.test(body) ? 1 : 0), 0);
 
-  // 상품명과 키워드가 완전히 무관한 경우를 단순 방어합니다.
   const normalizedBody = normalize(body);
   const normalizedProduct = normalize(productName);
   const normalizedKeyword = normalize(input.keyword);
@@ -119,6 +118,9 @@ export function validateContentQuality(input: QualityInput): QualityResult {
   score -= Math.min(20, highlySimilarPairs * 7);
   score -= Math.min(20, repeatedPhraseCount * 10);
   score -= Math.min(30, forbiddenPhraseCount * 10);
+
+  // 검사 사유가 하나라도 있으면 100점이 될 수 없도록 강제합니다.
+  if (reasons.length > 0) score = Math.min(99, score);
   score = Math.max(0, Math.round(score));
 
   return {
