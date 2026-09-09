@@ -6,6 +6,7 @@
 
 import app from "./index";
 import { validateLatestContent } from "./quality-run";
+import { createShortAffiliateLink } from "./affiliate";
 
 /** 수동 생성 API에서 사용할 경로입니다. */
 export const MANUAL_GENERATE_ROUTE = "/generate";
@@ -89,8 +90,41 @@ async function runWithManualKeyword(
 }
 
 /**
+ * 생성된 최신 글의 상품 ID를 쿠팡 Deeplink API에 보내 짧은 제휴 링크를 붙입니다.
+ * 긴 /re/AFFSDP?... 주소를 그대로 사용하지 않고 shortenUrl을 사용합니다.
+ */
+async function attachManualAffiliateLink(
+  env: Parameters<typeof app.fetch>[1],
+): Promise<string> {
+  const latest = await env.CONTENT_STORE.get("latest", "json") as any;
+  const productId = latest?.recommendation?.product?.productId;
+  if (!productId) throw new Error("생성된 콘텐츠에서 쿠팡 상품 ID를 찾을 수 없습니다.");
+
+  const subId = `flick-manual-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
+  const shortUrl = await createShortAffiliateLink(env, productId, subId);
+
+  // 게시용 링크만 짧은 제휴 링크로 교체하고 상품 원본 정보는 그대로 보존합니다.
+  latest.blog = {
+    ...(latest.blog ?? {}),
+    partnerUrl: shortUrl,
+    productUrl: shortUrl,
+  };
+  latest.affiliate = {
+    ...(latest.affiliate ?? {}),
+    originalProductId: productId,
+    shortUrl,
+    subId,
+    platform: "manual",
+    createdAt: new Date().toISOString(),
+  };
+
+  await env.CONTENT_STORE.put("latest", JSON.stringify(latest));
+  return shortUrl;
+}
+
+/**
  * 자동 생성과 동일한 실제 콘텐츠 생성 파이프라인을 수동으로 실행하고
- * 생성 직후 품질 검사를 기록합니다.
+ * 생성 직후 품질 검사와 단축 제휴 링크 처리를 수행합니다.
  */
 export async function runManualGenerate(
   request: Request,
@@ -102,13 +136,17 @@ export async function runManualGenerate(
 
   try {
     await runWithManualKeyword(env, ctx, manualKeyword);
+
+    // 생성된 긴 쿠팡 제휴 링크를 공식 Deeplink 단축 링크로 교체합니다.
+    const shortUrl = await attachManualAffiliateLink(env);
     const quality = await validateLatestContent(env);
 
     return Response.json({
       ok: true,
-      message: "수동 콘텐츠 생성과 품질 검사가 완료되었습니다.",
+      message: "수동 콘텐츠 생성과 품질 검사 및 단축 링크 처리가 완료되었습니다.",
       requestedKeyword,
       keyword: manualKeyword,
+      shortUrl,
       quality,
     });
   } catch (error) {
