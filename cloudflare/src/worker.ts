@@ -4,6 +4,7 @@ import { generateTistoryContent } from "./tistory";
 import { renderCombinedDashboard } from "./dashboard";
 import { runManualGenerate } from "./generate";
 import { validateLatestContent } from "./quality-run";
+import { createShortAffiliateLink } from "./affiliate";
 
 /** Cloudflare Worker의 최종 진입점입니다. */
 const DAILY_LOCK_PREFIX = "lock:daily:";
@@ -51,6 +52,49 @@ async function saveTistoryTitleHistory(env: BootstrapEnv, titles: unknown) {
   await env.CONTENT_STORE.put(USED_TITLES_KEY, JSON.stringify([...(current ?? []), ...validTitles].slice(-MAX_TITLE_HISTORY)));
 }
 
+/**
+ * 생성된 콘텐츠에 쿠팡 공식 Deeplink 단축 제휴 링크를 넣습니다.
+ * 상품 ID로 원본 쿠팡 상품 URL을 만들기 때문에 긴 URL을 글에 노출하지 않습니다.
+ */
+async function attachAffiliateLink(env: BootstrapEnv, record: any, platform: string) {
+  const product = record?.recommendation?.product;
+  if (!product?.productId) return { record, shortUrl: "" };
+
+  const subId = `flick-${platform}-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
+  const shortUrl = await createShortAffiliateLink(env, product.productId, subId);
+
+  // 기존 상품 URL은 보존하고, 실제 게시용 링크만 별도로 덮어씁니다.
+  record.blog = {
+    ...(record.blog ?? {}),
+    partnerUrl: shortUrl,
+    productUrl: shortUrl,
+  };
+  record.affiliate = {
+    ...(record.affiliate ?? {}),
+    originalProductId: product.productId,
+    shortUrl,
+    subId,
+    createdAt: new Date().toISOString(),
+  };
+  return { record, shortUrl };
+}
+
+/** 티스토리 콘텐츠에도 같은 방식으로 짧은 제휴 링크를 붙입니다. */
+async function attachTistoryAffiliateLink(env: BootstrapEnv, content: any, product: any) {
+  if (!product?.productId) return { content, shortUrl: "" };
+  const subId = `flick-tistory-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}`;
+  const shortUrl = await createShortAffiliateLink(env, product.productId, subId);
+  return {
+    content: {
+      ...content,
+      partnerUrl: shortUrl,
+      productUrl: shortUrl,
+      affiliate: { originalProductId: product.productId, shortUrl, subId, createdAt: new Date().toISOString() },
+    },
+    shortUrl,
+  };
+}
+
 const handler = {
   async fetch(request: Request, env: BootstrapEnv, ctx: ExecutionContext) {
     const url = new URL(request.url);
@@ -77,7 +121,7 @@ const handler = {
     return app.fetch(request, env, ctx);
   },
 
-  /** 매일 오전 9시(한국시간)에 네이버 → 품질검사 → 티스토리 순서로 자동 생성합니다. */
+  /** 매일 오전 9시(한국시간)에 네이버 → 품질검사 → 단축 링크 → 티스토리 순서로 자동 생성합니다. */
   async scheduled(controller: ScheduledController, env: BootstrapEnv, ctx: ExecutionContext) {
     const runDate = getRunDate(controller);
     const lockKey = `${DAILY_LOCK_PREFIX}${runDate}`;
@@ -92,25 +136,50 @@ const handler = {
       // 1. 네이버 콘텐츠를 생성합니다.
       await app.scheduled(controller, env, ctx);
 
-      // 2. 생성 직후 품질을 검사해 결과를 기록합니다.
+      // 2. 생성 직후 품질을 검사합니다.
       const quality = await validateLatestContent(env);
       if (quality && !quality.ok) {
-        // 품질 미통과라도 기존 글을 임의 삭제하지 않고 상태를 기록합니다.
-        // 이후 자동 발행 단계에서는 passed=true인 콘텐츠만 발행 대상으로 사용합니다.
         await env.CONTENT_STORE.put("last-run:quality", JSON.stringify({ status: "rejected", runDate, quality, finishedAt: new Date().toISOString() }));
         console.warn(`네이버 콘텐츠 품질 미통과 (${runDate}):`, quality.reasons.join(" / "));
-      } else {
-        await env.CONTENT_STORE.put("last-run:quality", JSON.stringify({ status: "passed", runDate, quality, finishedAt: new Date().toISOString() }));
+        return;
       }
 
-      // 3. 품질 검사를 통과한 경우에만 티스토리 생성으로 진행합니다.
+      // 3. 품질 통과 글에 쿠팡 공식 단축 제휴 링크를 생성합니다.
       const latest = await env.CONTENT_STORE.get("latest", "json") as any;
-      const product = getLatestProduct(latest);
+      if (latest?.recommendation?.product?.productId) {
+        try {
+          const linked = await attachAffiliateLink(env, latest, "naver");
+          await env.CONTENT_STORE.put("latest", JSON.stringify(linked.record));
+          await env.CONTENT_STORE.put("last-run:affiliate", JSON.stringify({ status: "success", runDate, shortUrl: linked.shortUrl, finishedAt: new Date().toISOString() }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "알 수 없는 오류";
+          await env.CONTENT_STORE.put("last-run:affiliate", JSON.stringify({ status: "error", runDate, message, finishedAt: new Date().toISOString() }));
+          console.error(`쿠팡 단축 링크 생성 실패 (${runDate}):`, message);
+          // 링크만 실패한 경우 글 자체는 보존하고 티스토리 생성을 진행합니다.
+        }
+      }
+
+      await env.CONTENT_STORE.put("last-run:quality", JSON.stringify({ status: "passed", runDate, quality, finishedAt: new Date().toISOString() }));
+
+      // 4. 품질 검사를 통과한 경우에만 티스토리 생성으로 진행합니다.
+      const latestWithLink = await env.CONTENT_STORE.get("latest", "json") as any;
+      const product = getLatestProduct(latestWithLink);
       if (product && quality?.ok) {
         try {
+          // 네이버에서 만든 단축 링크를 티스토리에도 재사용해 불필요한 Deeplink 호출을 줄입니다.
+          const shortUrl = latestWithLink?.affiliate?.shortUrl ?? "";
+          const linkedProduct = { ...product, productUrl: shortUrl || product.productUrl };
           const usedTitles = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
-          const tistoryContent = await generateTistoryContent(env, product, latest.keyword ?? product.keyword ?? "", usedTitles ?? []);
-          const saved = await saveTistoryContent(env, tistoryContent, latest);
+          let tistoryContent = await generateTistoryContent(env, linkedProduct, latestWithLink.keyword ?? product.keyword ?? "", usedTitles ?? []);
+
+          if (!shortUrl) {
+            const linkedTistory = await attachTistoryAffiliateLink(env, tistoryContent, product);
+            tistoryContent = linkedTistory.content;
+          } else {
+            tistoryContent = { ...tistoryContent, partnerUrl: shortUrl, productUrl: shortUrl };
+          }
+
+          const saved = await saveTistoryContent(env, tistoryContent, latestWithLink);
           await saveTistoryTitleHistory(env, tistoryContent.titles);
           await env.CONTENT_STORE.put("last-run:tistory", JSON.stringify({ status: "success", runDate, storageKey: saved.storageKey, finishedAt: new Date().toISOString() }));
         } catch (error) {
