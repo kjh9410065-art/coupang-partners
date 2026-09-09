@@ -44,8 +44,8 @@ export function renderLandingDashboard(): Response {
         const response=await fetch('/generate',{method:'GET',cache:'no-store'});
         const result=await response.json();
         if(!response.ok || !result.ok) throw new Error(result.message || '생성에 실패했습니다.');
-        // 생성이 끝난 뒤에만 최신 콘텐츠 화면을 엽니다.
-        window.location.href='/?view=latest';
+        // 생성이 끝난 뒤 전용 미리보기 화면을 바로 엽니다.
+        window.location.href='/preview';
       }catch(error){
         status.textContent='생성 실패: '+(error?.message || '알 수 없는 오류');
         button.disabled=false;
