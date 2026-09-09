@@ -79,6 +79,8 @@ export async function generateTistoryContent(env: TistoryEnv, product: TistoryPr
 - 가격/할인/최저가를 과장하지 않는다.
 - 제목 5개는 서로 다른 방향으로 작성한다.
 - 약 1,600~2,200자의 정보량을 유지한다.
+- 검색 주제는 본문에서 억지스럽지 않게 최소 1회 자연스럽게 언급한다.
+- 상품명도 본문에서 자연스럽게 언급한다.
 - 과거 제목과 문장 구조가 겹치지 않게 한다.
 ${generationAttempt > 1 ? "이전 결과가 품질 기준을 통과하지 못했다. 표현과 제목 구조를 크게 바꿔 다시 작성한다." : ""}
 
