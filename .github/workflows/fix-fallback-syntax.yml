@@ -1,0 +1,28 @@
+name: Fix fallback syntax
+on:
+  push:
+    paths-ignore:
+      - ".github/workflows/fix-fallback-syntax.yml"
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair generated TypeScript
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path("cloudflare/src/index.ts")
+          s=p.read_text(encoding="utf-8")
+          s=s.replace('`;\\n    return JSON.stringify({ titles, selectedTitle: titles[0], body });', '`;\n    return JSON.stringify({ titles, selectedTitle: titles[0], body });')
+          p.write_text(s,encoding="utf-8")
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloudflare/src/index.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix fallback TypeScript syntax"
+          git push
