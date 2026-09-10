@@ -239,7 +239,7 @@ async function generateGemini(env, prompt, maxOutputTokens = 4096) {
     } catch {
     }
     const evidence = Array.isArray(research?.evidence) ? research.evidence.slice(0, 5) : [];
-    const evidenceText = evidence.length ? evidence.join("\n") : "\uACF5\uAC1C \uC870\uC0AC \uC790\uB8CC\uC5D0\uC11C \uCDA9\uBD84\uD55C \uC81C\uD488 \uD2B9\uC9D5\uC744 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
+    const evidenceText = evidence.length ? `\uACF5\uAC1C \uC790\uB8CC ${evidence.length}\uAC74\uC744 \uB300\uC870\uD574 \uC0C1\uD488\uBA85\uACFC \uC77C\uCE58\uD558\uB294 \uC815\uBCF4\uB97C \uC6B0\uC120 \uD655\uC778\uD588\uC2B5\uB2C8\uB2E4. \uAC80\uC0C9 \uACB0\uACFC\uC758 \uC81C\uBAA9\uC774\uB098 \uC2A4\uB2C8\uD3AB\uC744 \uADF8\uB300\uB85C \uC62E\uAE30\uC9C0 \uC54A\uACE0, \uC11C\uB85C \uB9DE\uC9C0 \uC54A\uB294 \uC790\uB8CC\uB294 \uC81C\uC678\uD588\uC2B5\uB2C8\uB2E4.` : "\uACF5\uAC1C \uC870\uC0AC \uC790\uB8CC\uC5D0\uC11C \uC0C1\uD488\uACFC \uC9C1\uC811 \uC77C\uCE58\uD558\uB294 \uC81C\uD488 \uD2B9\uC9D5\uC744 \uCDA9\uBD84\uD788 \uD655\uC778\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
     const titles = [
       `${productName} \uC2E4\uC81C \uD655\uC778 \uC815\uBCF4\uC640 \uC8FC\uC694 \uD2B9\uC9D5 \uC815\uB9AC`,
       `${keyword} \uAD00\uB828 ${productName} \uD2B9\uC9D5\uACFC \uD655\uC778\uD560 \uC810`,
@@ -336,7 +336,10 @@ async function researchProduct(productName, productUrl) {
         const cleanSnippet = `${title} ${snippet}`.trim();
         if (title && cleanSnippet.length >= 20) {
           const sourceUrl = href.startsWith("http") ? href : "";
-          if (!sources.some((item) => item.title === title && item.snippet === snippet)) {
+          const productTokens2 = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+          const searchable = cleanSnippet.toLowerCase();
+          const relevant = productTokens2.length === 0 || productTokens2.some((token) => searchable.includes(token));
+          if (relevant && !sources.some((item) => item.title === title && item.snippet === snippet)) {
             sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });
           }
         }
@@ -355,7 +358,12 @@ async function researchProduct(productName, productUrl) {
               const description = stripHtml(block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "");
               const snippet = `${title} ${description}`.trim();
               if (title && snippet.length >= 20) {
-                sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+                const productTokens2 = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+                const searchable = snippet.toLowerCase();
+                const relevant = productTokens2.length === 0 || productTokens2.some((token) => searchable.includes(token));
+                if (relevant) {
+                  sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+                }
               }
             }
           }
@@ -378,11 +386,12 @@ async function researchProduct(productName, productUrl) {
     } catch {
     }
   }
+  const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
   for (const source of sources.slice(0, 8)) {
     const text = `${source.title} ${source.snippet}`;
-    if (new RegExp(productName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(text) || evidence.length < 5) {
-      evidence.push(text.slice(0, 700));
-    }
+    const searchable = text.toLowerCase();
+    const relevant = productTokens.length === 0 || productTokens.some((token) => searchable.includes(token));
+    if (relevant) evidence.push(text.slice(0, 700));
   }
   return {
     productName,
@@ -522,7 +531,12 @@ async function fetchRelatedImages(productName, officialImage) {
         const candidate = decodeBingUrl(match[1]);
         if (!candidate || !/^https?:\/\//i.test(candidate)) continue;
         if (images.some((item) => item === candidate)) continue;
-        if (/logo|icon|sprite|avatar|favicon/i.test(candidate)) continue;
+        if (/logo|icon|sprite|avatar|favicon|microsoft|windows/i.test(candidate)) continue;
+        const matchIndex = html.indexOf(match[0]);
+        const context = html.slice(Math.max(0, matchIndex - 1200), Math.min(html.length, matchIndex + 1200)).toLowerCase();
+        const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+        const relevant = productTokens.length === 0 || productTokens.some((token) => context.includes(token));
+        if (!relevant) continue;
         if (await isImageUrl(candidate)) images.push(candidate);
       }
     } catch {
