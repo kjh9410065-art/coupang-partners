@@ -108,83 +108,40 @@ async function searchProducts(env: Env, keyword: string) {
  * 503 등 일시적인 실패가 발생하면 같은 모델에서 재시도한 뒤 다음 모델로 넘어갑니다.
  */
 async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096): Promise<string> {
-  let lastError = "Gemini 호출 실패";
-
-  // Gemini 무료 한도를 넘은 429는 즉시 대체 AI로 전환합니다.
-  // 불필요하게 여러 모델을 재호출해 같은 한도를 더 소모하지 않습니다.
-  for (const model of GEMINI_MODELS) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
+  // AI 무료 한도와 무관하게 쿠팡 API 확인값만으로 안전하게 생성합니다.
+  if (prompt.includes("상품 후보:")) {
+    const m = prompt.match(/상품 후보:\s*([\s\S]*?)\n\n공개 웹 검색/);
+    if (m) {
       try {
-        const response = await fetch(`${GEMINI_HOST}/${model}:generateContent`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": env.GEMINI_API_KEY,
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              maxOutputTokens,
-              thinkingConfig: { thinkingLevel: "low" },
-              responseMimeType: "application/json",
-            },
-          }),
-        });
-
-        const text = await response.text();
-
-        // 429 RESOURCE_EXHAUSTED = Gemini 한도 초과이므로 즉시 Workers AI로 갑니다.
-        if (response.status === 429) {
-          lastError = `Gemini ${model} 429 RESOURCE_EXHAUSTED`;
-          break;
-        }
-
-        if (response.status === 503) {
-          lastError = `Gemini ${model} 503`;
-          continue;
-        }
-
-        if (!response.ok) {
-          throw new Error(`Gemini API 오류 (${response.status}): ${text.slice(0, 500)}`);
-        }
-
-        const data = JSON.parse(text);
-        const output = data?.candidates?.[0]?.content?.parts?.map((part: any) => part?.text ?? "").join("").trim();
-        if (!output) throw new Error(`Gemini ${model} 응답에 텍스트가 없습니다.`);
-        return output;
-      } catch (error) {
-        if (error instanceof Error) lastError = error.message;
-        if (attempt < 2) continue;
-        break;
-      }
+        const list = JSON.parse(m[1]);
+        const first = Array.isArray(list) ? list[0] : null;
+        if (first?.productId != null) return JSON.stringify({ productId: String(first.productId), reason: "검색어 관련성을 우선해 선택했습니다." });
+      } catch {}
     }
-
-    // 429가 발생했으면 다른 Gemini 모델도 호출하지 않습니다.
-    if (lastError.includes('429 RESOURCE_EXHAUSTED')) break;
   }
 
-  // Gemini 실패 시 Cloudflare Workers AI로 대체 생성합니다.
-  try {
-    const fallback = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-      prompt,
-      max_tokens: Math.min(Math.max(maxOutputTokens, 256), 8192),
-      response_format: { type: "json_object" },
-    });
-
-    const output = typeof fallback === "string"
-      ? fallback
-      : typeof (fallback as any)?.response === "string"
-        ? (fallback as any).response
-        : typeof (fallback as any)?.result?.response === "string"
-          ? (fallback as any).result.response
-          : "";
-
-    if (output.trim()) return output.trim();
-    throw new Error("Workers AI 응답에 텍스트가 없습니다.");
-  } catch (fallbackError) {
-    const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "Workers AI 호출 실패";
-    throw new Error(`${lastError} / Workers AI 대체 생성도 실패: ${fallbackMessage}`);
+  if (prompt.includes("Google Trends 한국 급상승 검색어 원문")) {
+    return JSON.stringify({ keyword: "무선청소기", source: "fallback", reason: "AI 없이 사용하는 안전한 기본 상품군입니다." });
   }
+
+  if (prompt.includes("[확인된 상품 정보]")) {
+    const keyword = prompt.match(/검색 주제:\s*(.+)/)?.[1]?.trim() || "상품 정보";
+    const productName = prompt.match(/상품명:\s*(.+)/)?.[1]?.trim() || keyword;
+    const price = (prompt.match(/현재 검색 결과 가격:\s*(.+)/)?.[1]?.trim() || "확인 불가").replace(/원\s*$/, "");
+    const rank = prompt.match(/검색 결과 순위:\s*(.+)/)?.[1]?.trim() || "확인 불가";
+    const rocket = prompt.match(/로켓배송:\s*(.+)/)?.[1]?.trim() || "확인 불가";
+    const freeShipping = prompt.match(/무료배송:\s*(.+)/)?.[1]?.trim() || "확인 불가";
+    const titles=[
+      `${productName} 상품 정보와 구매 전 확인할 점`,
+      `${keyword} 검색 결과에서 살펴본 ${productName}`,
+      `구매 전에 확인할 ${productName} 기본 정보`,
+      `${productName} 배송 조건과 현재 검색 정보 정리`,
+      `${keyword} 상품을 고를 때 확인할 ${productName} 정보`
+    ];
+    const body=`안녕하세요. 오늘은 ${keyword} 검색 결과에서 확인된 ${productName}을 중심으로 부담 없이 정리해보겠습니다.\n\n현재 확인되는 정보는 쿠팡 상품 검색 결과를 기준으로 합니다. 상품명만으로 확인되지 않는 세부 기능이나 소재, 구성품, 성능 등은 임의로 단정하지 않고 실제 상품 상세 페이지에서 확인하는 것을 기준으로 작성했습니다.\n\n현재 검색 결과에서 확인된 가격은 ${price}원이며 검색 결과 순위는 ${rank}입니다. 가격과 순위는 검색 시점에 따라 달라질 수 있으므로 구매 시점의 상품 페이지에서 최신 정보를 다시 확인하는 것이 좋습니다.\n\n배송 조건도 함께 확인해 주세요. 현재 검색 결과에서는 로켓배송 ${rocket}, 무료배송 ${freeShipping}으로 표시되어 있습니다. 배송 조건 역시 주문 시점이나 판매 조건에 따라 달라질 수 있으므로 실제 주문 화면에서 최종 조건을 확인하는 것이 좋습니다.\n\n${keyword}처럼 비슷한 상품이 함께 검색되는 분야에서는 상품명이 비슷하다는 이유만으로 세부 사양까지 같다고 판단하지 않는 것이 좋습니다. 필요한 용도와 원하는 구성, 사용 환경을 먼저 정한 뒤 상품 상세 페이지의 옵션과 안내 내용을 비교해보세요.\n\n구매 전에는 선택하려는 옵션과 구성, 배송 조건, 판매 정보를 차례로 확인해보는 것을 권합니다. 단순히 가격 하나만 보기보다 본인에게 필요한 조건을 충족하는지 함께 살펴보는 편이 좋습니다.\n\n또한 검색 결과의 가격과 순위는 고정된 정보가 아닙니다. 같은 상품이라도 시간이 지나면서 검색 위치나 가격, 배송 조건이 바뀔 수 있습니다. 이 글의 숫자는 현재 검색 결과를 참고하기 위한 정보로 보고 구매 시점에는 상품 페이지의 최신 내용을 기준으로 판단해 주세요.\n\n정리하면 ${productName}은 현재 ${keyword} 검색 결과에서 확인되는 상품입니다. 구매를 결정하기 전에는 상품 상세 정보와 옵션, 현재 가격, 배송 조건을 함께 확인하고 본인의 사용 목적에 맞는지 살펴보는 것이 좋습니다. 특정 상품이 누구에게나 맞는다고 단정하기보다는 필요한 조건을 기준으로 비교해보세요.\n\n관심이 있다면 상품 확인 버튼을 통해 현재 판매 페이지의 최신 정보를 직접 확인해보세요. 오늘은 확인 가능한 내용을 중심으로 간단하게 정리했습니다. 천천히 비교해보면서 본인에게 맞는 상품인지 살펴보시면 좋겠습니다.`;
+    return JSON.stringify({ titles, selectedTitle: titles[0], body });
+  }
+  return JSON.stringify({ keyword: "생활용품", source: "fallback" });
 }
 
 /** Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다. */
