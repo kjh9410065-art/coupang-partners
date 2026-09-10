@@ -7,7 +7,7 @@ export function buildProductPost(keyword: string, productName: string, researchE
   const nameParts = productName.split(/\s+/).filter(Boolean);
 
   // 상품명에 실제로 들어 있는 용도/특징 표현만 추립니다.
-  const featurePattern = /LED|링라이트|조명|촬영|핸드폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|보온용품|주방|차량|청소|공기청정|이어폰|컴퓨터|주변기기|선물세트|명절/i;
+  const featurePattern = /LED|링라이트|조명|촬영|핸드폰|거치대|스탠드|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|방풍|보온용품|주방|차량|청소|공기청정|이어폰|컴퓨터|주변기기|선물세트|명절|무선|유선|충전|접이식|방수|대용량|휴대용|미니|대형|소형|USB|블루투스|자동|저소음|멀티|수납|정리|필터|살균|경량|휴대|여행|욕실|반려동물|사무용|가정용|차량용/i;
   const features = [...new Set(nameParts.filter((word) => featurePattern.test(word)))];
   const featureText = features.length ? features.join(", ") : productName;
 
