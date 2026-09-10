@@ -4,37 +4,34 @@ on:
   push:
     paths-ignore:
       - ".github/workflows/replace-content-structure.yml"
-
 permissions:
   contents: write
-
 jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Replace fallback body structure
+      - name: Replace fallback body
         shell: python
         run: |
           from pathlib import Path
           p = Path("cloudflare/src/index.ts")
           s = p.read_text(encoding="utf-8")
-          start = s.index('    const body=`안녕하세요. 오늘은 ${keyword} 검색 결과에서 확인된 ${productName}')
-          end = s.index('    return JSON.stringify({ titles, selectedTitle: titles[0], body });', start)
-          new = r'''    // 상품명에서 확인할 수 있는 정보만 사용해 실제 블로그 글의 구조로 작성합니다.
-          const nameParts = productName.split(/\s+/).filter(Boolean);
-          const featureWords = nameParts.filter((word) => /LED|링라이트|조명|촬영|핸드폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|다보여|발톱깎이|손톱깎이|수납|접이식|휴대용|미니|대형|세트|충전|무선|유선|방수|방한|차량용|반려동물|강아지|고양이/i.test(word));
+          start = s.index("    const body=`안녕하세요. 오늘은 ${keyword} 검색 결과에서 확인된 ${productName}")
+          end = s.index("    return JSON.stringify({ titles, selectedTitle: titles[0], body });", start)
+          new = '''    // 상품명에서 확인되는 특징을 중심으로 실제 블로그 글처럼 구성합니다.
+          const nameParts = productName.split(/\\s+/).filter(Boolean);
+          const featureWords = nameParts.filter((word) => /LED|링라이트|조명|촬영|핸드폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|다보여|발톱깎이|손톱깎이|수납|접이식|휴대용|미니|대형|세트|충전|무선|유선|방수|차량용|반려동물|강아지|고양이/i.test(word));
           const features = [...new Set(featureWords.length ? featureWords : nameParts.slice(0, 8))].join(", ");
-          const productType = productName.replace(new RegExp(`\\b(${featureWords.map((x) => x.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")).join("|")})\\b`, "gi"), "").replace(/\\s+/g, " ").trim() || productName;
-          const body = `안녕하세요. 오늘은 ${productName}을 간단하게 소개해볼게요.\\n\\n[파트너스 안내]\\n${PARTNERS_DISCLOSURE}\\n\\n[제품소개]\\n${productName}은 상품명에서 ${features}와 같은 특징을 확인할 수 있는 제품입니다. 상품명에 표시된 내용을 기준으로 보면 ${productType}을 중심으로 ${features}가 함께 표기되어 있습니다. 상품 상세 페이지에서 실제 구성과 옵션을 확인하면 제품을 고를 때 필요한 정보를 더 정확하게 확인할 수 있습니다.\\n\\n[추천이유]\\n이 제품은 ${features}라는 특징이 필요한 분이라면 살펴볼 만합니다. 특히 ${keyword}를 찾으면서 이런 형태의 제품을 함께 비교하고 있다면 상품명에 표시된 특징과 본인의 사용 목적이 맞는지 확인해보세요.\\n\\n[장점]\\n상품명에서 확인되는 특징이 비교적 분명하다는 점이 장점입니다. ${features}처럼 필요한 용도나 형태가 상품명에 표시되어 있어 비슷한 상품을 비교할 때 원하는 조건을 먼저 확인하기 좋습니다.\\n\\n[단점]\\n상품명만으로는 세부 사양과 실제 구성, 사용 방식까지 모두 확인하기 어렵습니다. 따라서 상품명에 표시되지 않은 기능이나 구성은 구매 전에 상세 페이지에서 별도로 확인해야 합니다.\\n\\n[어디에 사용하면 좋은지]\\n상품명에 표시된 ${features}와 같은 용도나 특징을 필요로 하는 상황에서 사용을 고려할 수 있습니다. ${keyword} 관련 상품을 찾고 있다면 본인이 사용하려는 장소와 목적에 맞는지 먼저 살펴보는 것이 좋습니다.\\n\\n[추천사용처]\\n${keyword} 관련 용도로 찾는 경우, 상품명에 표시된 특징이 필요한 가정이나 일상적인 사용 환경에서 비교해보는 것을 추천합니다. 실제 사용 환경에 맞는 크기와 구성, 옵션은 상품 상세 페이지에서 확인해주세요.\\n\\n[파트너스 링크]\\n관심이 있다면 아래 상품 확인 버튼에서 현재 판매 페이지를 확인해보세요.\\n\\n[마무리 인사]\\n오늘은 ${productName}을 상품명에서 확인되는 내용을 중심으로 간단하게 소개해봤습니다. 필요한 특징을 먼저 정해두고 비슷한 상품과 함께 비교해보시면 선택하는 데 도움이 될 거예요. 좋은 상품 잘 고르시길 바랍니다.`;
+          const body = `안녕하세요. 오늘은 ${productName}을 소개해볼게요.\\n\\n${PARTNERS_DISCLOSURE}\\n\\n제품소개\\n${productName}은 상품명에서 ${features}와 같은 특징이 확인되는 제품입니다. 상품명에 표시된 이름을 보면 ${features}가 함께 들어가 있어 이런 특징을 찾는 분들이 살펴보기 좋은 제품입니다. 상품명에 없는 세부 사양이나 구성은 임의로 추가하지 않고 실제 상품 페이지에서 확인하는 것을 기준으로 합니다.\\n\\n추천이유\\n${features}처럼 필요한 특징이 분명한 제품을 찾고 있다면 비교해볼 만합니다. ${keyword} 검색 결과에서 이 제품을 살펴보면서 본인이 원하는 용도와 상품명에 표시된 특징이 잘 맞는지 확인해보세요.\\n\\n장점\\n가장 눈에 띄는 부분은 상품명에 ${features}가 명확하게 표시되어 있다는 점입니다. 원하는 용도와 특징을 빠르게 확인할 수 있어 비슷한 상품을 비교할 때 기준을 잡기 좋습니다.\\n\\n단점\\n상품명만으로는 실제 구성이나 세부적인 사용 방법까지 모두 알기 어렵습니다. 상품명에 표시되지 않은 기능이나 사양은 상세 페이지에서 확인해야 합니다.\\n\\n어디에 사용하면 좋은지\\n상품명에 표시된 ${features}가 필요한 일상적인 상황에서 사용을 고려할 수 있습니다. ${keyword}와 관련된 제품을 찾고 있다면 실제로 사용하려는 장소와 목적에 맞는지 확인해보세요.\\n\\n추천사용처\\n${keyword} 관련 제품을 찾는 경우, 상품명에 표시된 특징이 필요한 가정이나 일상적인 사용 환경에서 비교해보는 것을 추천합니다. 필요한 구성과 옵션은 상품 상세 페이지에서 확인해주세요.\\n\\n파트너스 링크\\n관심이 있다면 아래 상품 확인 버튼을 통해 현재 판매 페이지를 확인해보세요.\\n\\n마무리 인사\\n오늘은 ${productName}을 상품명에서 확인되는 특징을 중심으로 소개해봤습니다. 필요한 용도와 원하는 특징을 먼저 정해두고 비교해보시면 상품을 고르는 데 도움이 될 거예요. 좋은 상품 잘 고르시길 바랍니다.`;
 '''
           s = s[:start] + new + s[end:]
           p.write_text(s, encoding="utf-8")
-      - name: Commit patch
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add cloudflare/src/index.ts
           git diff --cached --quiet && exit 0
-          git commit -m "Use natural product blog structure"
+          git commit -m "Use structured natural product posts"
           git push
