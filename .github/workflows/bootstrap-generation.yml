@@ -15,8 +15,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install deterministic AI-free fallback
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
           import re
           from textwrap import dedent
@@ -24,7 +25,6 @@ jobs:
           path = Path("cloudflare/src/index.ts")
           text = path.read_text(encoding="utf-8")
 
-          # 실제 운영 경로인 index.ts의 AI 호출기를 한 번에 안전한 fallback으로 교체합니다.
           pattern = r'async function generateGemini\(env: Env, prompt: string, maxOutputTokens = 4096\): Promise<string> \{[\s\S]*?\n\}\n\n/\*\* Google Trends 한국 급상승 검색어를 오늘의 관심 신호로 가져옵니다\. \*/'
           replacement = dedent(r'''
           /**
@@ -97,6 +97,7 @@ ${keyword}처럼 비슷한 상품이 함께 검색되는 분야에서는 상품�
           if count != 1:
               raise SystemExit("generateGemini 교체 대상을 찾지 못했습니다.")
           path.write_text(new_text, encoding="utf-8")
+          PY
 
       - name: Commit fallback code
         run: |
