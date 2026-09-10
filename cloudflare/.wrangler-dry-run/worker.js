@@ -88,7 +88,9 @@ function extractClaims(body) {
   const patterns = [
     /\b\d+(?:\.\d+)?\s*(?:v|w|a|mah|mm|cm|m|kg|g|l|ml|인치|단|개|매|세트)\b/gi,
     /\d+(?:\.\d+)?\s*(?:볼트|와트|암페어|킬로그램|그램|리터|센티미터|밀리미터)/gi,
-    /(?:높이|길이|폭|무게|용량|출력|전압|소비전력|배터리|재질|소재|방수|방진|충전|무선|유선|접이식|회전|각도|조절|수직촬영|거치|호환|지원)[^\n.!?]{0,45}/gi
+    // 기능 키워드 자체만 검사합니다. 뒤의 일반 문장까지 붙잡으면
+    // "무선청소기 관련 상품을 찾고 있다" 같은 정상 문장을 오탐할 수 있습니다.
+    /(?:높이|길이|폭|무게|용량|출력|전압|소비전력|배터리|재질|소재|방수|방진|충전|무선|유선|접이식|회전|각도|조절|수직촬영|거치|호환|지원)/gi
   ];
   const claims = /* @__PURE__ */ new Set();
   for (const pattern of patterns) {
@@ -125,7 +127,7 @@ function factCheckContent(input) {
       if (reasons.length >= 6) break;
     }
   }
-  const priceMentions = input.body.match(/\d{1,3}(?:,\d{3})*\s*원/g) ?? [];
+  const priceMentions = input.body.match(/\d+(?:,\d{3})*\s*원/g) ?? [];
   const price = Number(input.product?.productPrice) || 0;
   if (priceMentions.length) {
     const normalizedPrice = price.toLocaleString("ko-KR");
@@ -337,6 +339,27 @@ async function researchProduct(productName, productUrl) {
           if (!sources.some((item) => item.title === title && item.snippet === snippet)) {
             sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });
           }
+        }
+      }
+      if (!sources.length) {
+        try {
+          const rssUrl = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
+          const rssResponse = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+          if (rssResponse.ok) {
+            const rss = await rssResponse.text();
+            for (const item of rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+              if (sources.length >= 12) break;
+              const block = item[1];
+              const title = stripHtml(block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+              const href = stripHtml(block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] ?? "");
+              const description = stripHtml(block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "");
+              const snippet = `${title} ${description}`.trim();
+              if (title && snippet.length >= 20) {
+                sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+              }
+            }
+          }
+        } catch {
         }
       }
     } catch {
