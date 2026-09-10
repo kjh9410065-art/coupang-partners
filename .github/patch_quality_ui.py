@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# PATCH_TRIGGER_20260910_1758
 root = Path("cloudflare/src")
 
 # index.ts: 중복 titles 선언 제거 + 본문 속 중복 고지문 제거
