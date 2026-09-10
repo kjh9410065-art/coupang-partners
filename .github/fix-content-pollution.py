@@ -7,7 +7,6 @@ s = index.read_text(encoding='utf-8')
 # 검색 결과가 상품과 무관하면 조사 근거로 채택하지 않도록 상품명 핵심 토큰으로 필터링합니다.
 old = '''      while ((match = liRegex.exec(html)) !== null && sources.length < 12) {\n        const block = match[1];'''
 new = '''      while ((match = liRegex.exec(html)) !== null && sources.length < 12) {\n        const block = match[1];'''
-# Keep loop itself unchanged; filtering is inserted at the source acceptance point.
 needle = '''        if (title && cleanSnippet.length >= 20) {\n          const sourceUrl = href.startsWith("http") ? href : "";\n          if (!sources.some((item) => item.title === title && item.snippet === snippet)) {\n            sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });\n          }\n        }'''
 replacement = '''        if (title && cleanSnippet.length >= 20) {\n          const sourceUrl = href.startsWith("http") ? href : "";\n          // 상품명과 무관한 검색 결과(예: Microsoft 도움말)는 근거에서 완전히 제외합니다.\n          const productTokens = productName.toLowerCase().split(/\\s+/).filter((token) => token.length >= 2);\n          const searchable = cleanSnippet.toLowerCase();\n          const relevant = productTokens.length === 0 || productTokens.some((token) => searchable.includes(token));\n          if (relevant && !sources.some((item) => item.title === title && item.snippet === snippet)) {\n            sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });\n          }\n        }'''
 if needle not in s:
@@ -28,11 +27,6 @@ if old not in s:
 s = s.replace(old, new, 1)
 
 # 이미지 검색도 상품명과 무관한 이미지(예: Microsoft)를 절대 삽입하지 않습니다.
-needle = '''      const matches = [...html.matchAll(/"murl":"(.*?)"/g)];\n      for (const match of matches) {'''
-replacement = '''      const matches = [...html.matchAll(/"murl":"(.*?)"/g)];\n      for (const match of matches) {'''
-if needle not in s:
-    raise SystemExit('image match block not found')
-
 needle = '''        const candidate = decodeBingUrl(match[1]);\n        if (!candidate || !/^https?:\\/\\//i.test(candidate)) continue;\n        if (images.some((item) => item === candidate)) continue;\n        if (/logo|icon|sprite|avatar|favicon/i.test(candidate)) continue;\n\n        // 실제 이미지 응답인지 간단히 확인합니다. 실패하면 후보에서 제외합니다.\n        if (await isImageUrl(candidate)) images.push(candidate);'''
 replacement = '''        const candidate = decodeBingUrl(match[1]);\n        if (!candidate || !/^https?:\\/\\//i.test(candidate)) continue;\n        if (images.some((item) => item === candidate)) continue;\n        if (/logo|icon|sprite|avatar|favicon|microsoft|windows/i.test(candidate)) continue;\n\n        // 이미지 URL만으로 관련성을 판단할 수 없는 경우가 많으므로,\n        // 해당 이미지가 포함된 Bing 결과 주변 텍스트에서 상품명 토큰을 확인합니다.\n        const matchIndex = html.indexOf(match[0]);\n        const context = html.slice(Math.max(0, matchIndex - 1200), Math.min(html.length, matchIndex + 1200)).toLowerCase();\n        const productTokens = productName.toLowerCase().split(/\\s+/).filter((token) => token.length >= 2);\n        const relevant = productTokens.length === 0 || productTokens.some((token) => context.includes(token));\n        if (!relevant) continue;\n\n        // 실제 이미지 응답인지 간단히 확인합니다. 실패하면 후보에서 제외합니다.\n        if (await isImageUrl(candidate)) images.push(candidate);'''
 if needle not in s:
@@ -48,3 +42,4 @@ s = s.replace(old, new, 1)
 
 index.write_text(s, encoding='utf-8')
 print('content pollution fix complete')
+print('trigger validation workflow')
