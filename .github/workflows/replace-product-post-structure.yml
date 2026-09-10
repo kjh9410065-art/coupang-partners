@@ -1,0 +1,60 @@
+name: Replace product post structure
+on:
+  push:
+    paths-ignore:
+      - ".github/workflows/replace-product-post-structure.yml"
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace fallback article structure
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path("cloudflare/src/index.ts")
+          s = p.read_text(encoding="utf-8")
+          start = s.index('  if (prompt.includes("[확인된 상품 정보]")) {')
+          end = s.index('  return JSON.stringify({ keyword: "생활용품", source: "fallback" });', start)
+          new = r'''  if (prompt.includes("[확인된 상품 정보]")) {
+    const keyword = prompt.match(/검색 주제:\s*(.+)/)?.[1]?.trim() || "상품 정보";
+    const productName = prompt.match(/상품명:\s*(.+)/)?.[1]?.trim() || keyword;
+
+    // 상품명에 실제로 포함된 표현만 특징 후보로 사용합니다.
+    const nameParts = productName.split(/\s+/).filter(Boolean);
+    const featureWords = nameParts.filter((word) =>
+      /LED|링라이트|조명|촬영|핸드폰|스마트폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|보온용품|수납|정리|접이식|휴대용|충전|블루투스|무선|키보드|마우스|이어폰|스피커|텀블러|보냉|보온병/i.test(word),
+    );
+    const features = [...new Set(featureWords)];
+    const featureText = features.length ? features.join(", ") : "상품명에서 확인되는 기본 특징";
+
+    // 제목도 '구매 전 확인할 점' 같은 반복형 제목 대신 상품 자체를 중심으로 만듭니다.
+    const titles = [
+      `${productName} 제품 특징과 활용 방법`,
+      `${productName} 어떤 제품인지 간단하게 알아보기`,
+      `${productName} 주요 특징과 추천 사용처`,
+      `${productName} 장점과 아쉬운 점 정리`,
+      `${productName} 이런 용도로 활용하기 좋은 제품`,
+    ];
+
+    // 가격·순위·배송 정보는 의도적으로 본문에서 제외합니다.
+    const body = `안녕하세요. 오늘은 ${productName}이 어떤 제품인지 간단하게 소개해볼게요.\n\n제품소개\n${productName}은 상품명에서 ${featureText} 등의 표현을 확인할 수 있는 제품입니다. 상품명에 표시된 특징을 중심으로 살펴보면 어떤 용도로 활용할 수 있는지 이해하기 쉽습니다. 상품명만으로 확인되지 않는 세부 사양이나 성능은 임의로 추가하지 않고, 실제 상품 상세 페이지에서 확인할 수 있는 내용을 기준으로 보는 것이 좋습니다.\n\n추천이유\n이 제품은 ${keyword}와 관련된 제품을 찾으면서 상품명에 표시된 특징이나 용도가 필요한 분들이 살펴보기 좋습니다. 특히 제품을 고를 때 복잡한 조건보다 내가 필요한 용도와 제품의 표시된 특징이 맞는지를 먼저 비교하고 싶은 경우 참고하기 편합니다.\n\n장점\n가장 먼저 볼 부분은 상품명에 표시된 ${featureText} 같은 특징입니다. 필요한 용도와 관련된 표현이 명확하게 표시되어 있다면 비슷한 상품을 비교할 때 기준을 잡기 쉽습니다. 또한 여러 특징이 상품명에 함께 표시되어 있다면 내가 원하는 사용 목적과 맞는 부분을 빠르게 찾아볼 수 있습니다.\n\n단점\n반대로 상품명만으로는 실제 크기나 구성, 세부 사양처럼 구매에 필요한 모든 정보를 알 수 없습니다. 상품명에 표시된 특징이 실제 기본 구성인지 선택 옵션인지도 상품 상세 페이지에서 확인해야 합니다. 따라서 이름만 보고 모든 기능이 포함되어 있다고 판단하지 않는 것이 좋습니다.\n\n어디에 사용하면 좋은지\n상품명에 표시된 ${featureText}와 관련된 용도로 사용하는 것을 먼저 생각해볼 수 있습니다. 내가 필요한 사용 환경과 상품명에 표시된 용도가 맞는다면 후보로 비교해보기 좋습니다. 반대로 상품명에서 원하는 용도를 확인하기 어렵다면 상세 페이지의 제품 설명과 구성 정보를 추가로 확인하는 것이 좋습니다.\n\n추천사용처\n${keyword} 관련 제품을 찾는 분, 상품명에 표시된 ${featureText}가 필요한 분, 비슷한 제품을 비교하면서 기본적인 특징부터 살펴보고 싶은 분에게 추천할 만합니다. 사용하려는 장소와 목적을 먼저 정한 뒤 실제 상품의 구성과 옵션을 확인하면 더욱 정확하게 비교할 수 있습니다.\n\n마무리 인사\n오늘은 ${productName}의 상품명에서 확인할 수 있는 특징과 활용 방법을 중심으로 간단하게 살펴봤습니다. 제품을 고를 때는 내가 필요한 용도와 상품에 표시된 특징이 잘 맞는지 확인해보는 것이 가장 중요합니다. 관심이 있다면 아래 상품 확인 링크에서 자세한 제품 정보를 직접 확인해보세요. 좋은 상품 선택에 도움이 되었으면 좋겠습니다.`;
+
+    return JSON.stringify({ titles, selectedTitle: titles[0], body });
+  }
+
+'''
+          s = s[:start] + new + s[end:]
+          p.write_text(s, encoding="utf-8")
+      - name: Commit patch and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloudflare/src/index.ts .github/workflows/replace-product-post-structure.yml
+          git commit -m "Use natural product-focused blog structure"
+          git rm .github/workflows/replace-product-post-structure.yml
+          git commit -m "Remove temporary product structure patch workflow"
+          git push
