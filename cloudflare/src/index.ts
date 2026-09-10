@@ -22,6 +22,7 @@ export interface Env {
 }
 
 import { validateContentQuality } from "./quality";
+import { factCheckContent, type ProductResearch } from "./factcheck";
 
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
@@ -138,11 +139,20 @@ async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096):
       `${productName} 배송 조건과 현재 검색 정보 정리`,
       `${keyword} 상품 선택 전 체크할 ${productName} 내용`
     ];
-    // 상품명에 실제로 적혀 있는 표현만 추려 상품 설명에 활용합니다.
-const nameParts = productName.split(/\s+/).filter(Boolean);
-const featureWords = nameParts.filter((word) => /LED|링라이트|조명|촬영|핸드폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|보온용품/i.test(word));
-const visibleFeatures = featureWords.length ? [...new Set(featureWords)].join(", ") : productName;
-const body=`안녕하세요. 오늘은 ${keyword} 검색 결과에서 확인된 ${productName}을 상품명과 현재 검색 정보 기준으로 살펴보겠습니다.\n\n먼저 상품명에서 확인되는 내용부터 보면, 이 상품은 '${visibleFeatures}'라는 표현이 포함되어 있습니다. 여기서 확인되는 용도와 특징은 상품명에 표시된 범위까지만 설명하며, 상품명에 없는 성능이나 세부 사양은 임의로 추가하지 않습니다. 실제 구성이나 지원 기능은 구매 전 상품 상세 페이지에서 확인하는 것이 좋습니다.\n\n상품명에 ' ${featureWords.join(" ")}'처럼 여러 용도와 특징이 함께 표시되어 있다면, 구매할 때는 그중 본인에게 필요한 기능이 무엇인지 먼저 확인해보세요. 같은 검색어로 여러 상품이 노출될 수 있기 때문에 상품 이름이 비슷하다는 이유만으로 구성이나 성능이 같다고 판단하기보다는 상세 페이지의 옵션과 상품 안내를 함께 비교하는 편이 좋습니다.\n\n현재 쿠팡 검색 결과에서 확인된 가격은 ${price}원이고 검색 결과 순위는 ${rank}입니다. 이 숫자는 생성 당시 검색 결과에서 확인된 값이며 시간이 지나면 달라질 수 있습니다. 따라서 현재 가격만 보고 판단하기보다는 구매하려는 시점에 다시 상품 페이지를 열어 최신 가격과 선택 옵션을 확인하는 것이 좋습니다.\n\n배송 조건도 확인할 부분입니다. 현재 검색 결과에는 로켓배송 ${rocket}, 무료배송 ${freeShipping}으로 표시되어 있습니다. 배송 여부와 조건은 주문 시점이나 판매 조건에 따라 달라질 수 있으므로 실제 주문 화면에서 최종 내용을 확인해주세요.\n\n이 상품을 살펴볼 때는 먼저 상품명에 표시된 용도가 본인이 필요한 상황과 맞는지 확인하는 것이 좋습니다. 이후 상품 상세 페이지에서 크기와 구성, 선택 옵션처럼 구매 결정에 필요한 정보를 차례로 살펴보면 됩니다. 검색 결과에 표시되는 정보만으로 확인하기 어려운 항목은 추측해서 판단하지 않는 것이 안전합니다.\n\n또한 상품명에 여러 키워드가 들어간 경우에도 각각의 표현이 실제 상품의 어떤 부분을 의미하는지는 상세 페이지에서 확인해야 합니다. 예를 들어 용도와 사용 대상이 함께 적혀 있다면 해당 기능이 기본 구성인지 선택 옵션인지 살펴보고, 필요한 구성품이 포함되어 있는지도 주문 전에 확인해보세요.\n\n정리하면 ${productName}은 현재 ${keyword} 검색 결과에서 확인된 상품이며, 상품명에서 ${visibleFeatures}와 같은 표현을 확인할 수 있습니다. 가격은 ${price}원, 검색 순위는 ${rank}로 확인되지만 모두 검색 시점의 정보입니다. 구매 전에는 상품 상세 페이지에서 실제 사양과 구성, 옵션, 최신 가격과 배송 조건을 다시 확인하는 것이 좋습니다.\n\n관심이 있다면 상품 확인 버튼을 통해 현재 판매 페이지를 직접 확인해보세요. 상품명에서 확인할 수 있는 내용과 검색 결과의 숫자를 구분해서 살펴보면 본인에게 필요한 상품인지 비교하기가 한결 편합니다.`;
+    // AI를 사용할 수 없는 경우에도 웹 조사 결과의 문장을 근거로만 설명합니다.
+    const researchMatch = prompt.match(/\[팩트체크용 제품 조사 결과\]\s*([\s\S]*?)\n\n\[참고용 사용자 의견 신호\]/);
+    let research: any = null;
+    try { research = researchMatch ? JSON.parse(researchMatch[1]) : null; } catch {}
+    const evidence = Array.isArray(research?.evidence) ? research.evidence.slice(0, 5) : [];
+    const evidenceText = evidence.length ? evidence.join("\n") : "공개 조사 자료에서 충분한 제품 특징을 확인하지 못했습니다.";
+    const titles=[
+      `${productName} 실제 확인 정보와 주요 특징 정리`,
+      `${keyword} 관련 ${productName} 특징과 확인할 점`,
+      `구매 전 알아본 ${productName} 주요 기능과 특징`,
+      `${productName} 제품 정보와 사용 목적별 확인 포인트`,
+      `${keyword} 찾을 때 살펴본 ${productName} 정보`
+    ];
+    const body=`안녕하세요. 오늘은 ${productName}을 상품명만 보고 판단하지 않고 공개된 제품 정보를 찾아 주요 특징을 확인해봤습니다.\n\n${PARTNERS_DISCLOSURE}\n\n제품을 알아본 내용\n이번 글에서는 상품명에 적힌 표현만으로 특징을 단정하지 않고, 공개 검색 결과와 확인 가능한 상품 정보를 함께 살펴봤습니다. 조사 과정에서 확인된 내용은 다음과 같습니다.\n\n${evidenceText}\n\n실제로 확인된 특징\n위 자료에서 반복적으로 확인되는 제품 관련 내용만 본문에 반영합니다. 반대로 공개 자료에서 확인되지 않은 세부 사양이나 성능은 임의로 추가하지 않았습니다. 같은 이름의 상품이 여러 판매처에 있을 수 있기 때문에 구매하려는 상품의 상세 페이지와 옵션이 동일한지도 함께 확인하는 것이 좋습니다.\n\n구매 전에 확인할 점\n상품을 비교할 때는 내가 필요한 기능이 실제 기본 구성에 포함되어 있는지, 선택 옵션인지, 별도 구매가 필요한지 확인해보는 것이 좋습니다. 공개 검색 자료만으로 확인하기 어려운 부분은 추측하지 않고 상품 상세 페이지의 최신 정보를 기준으로 판단하는 편이 안전합니다.\n\n어떤 분이 살펴보면 좋은지\n${keyword} 관련 상품을 찾고 있으면서 이번에 확인된 특징이나 용도가 본인에게 필요한지 비교해보고 싶은 분이라면 살펴볼 만합니다. 특정 제품이 모든 사람에게 적합하다고 단정하기보다는 사용 목적과 필요한 조건을 먼저 정해두고 비교하는 것을 추천합니다.\n\n마무리\n정리하면 ${productName}은 공개된 자료를 확인해 주요 특징을 살펴본 상품입니다. 상품명에 없는 내용을 임의로 붙이지 않고 조사에서 확인된 내용만 정리했으며, 실제 구매 전에는 상품 상세 페이지에서 최신 사양과 구성, 옵션을 다시 확인해보세요. 관심이 있다면 상품 확인 버튼에서 현재 판매 정보를 직접 확인할 수 있습니다.`;
     return JSON.stringify({ titles, selectedTitle: titles[0], body });
   }
   return JSON.stringify({ keyword: "생활용품", source: "fallback" });
@@ -210,6 +220,78 @@ function stripHtml(value: string) {
     .replace(/&#39;|&#039;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+
+/**
+ * 상품명 자체가 아니라 실제 공개 웹 검색 결과를 조사해 제품 특징의 근거를 확보합니다.
+ * 한 번의 생성 실행에서만 호출하며, 조사 결과는 본문 생성과 팩트체크에 공통으로 사용합니다.
+ */
+async function researchProduct(productName: string, productUrl: string): Promise<ProductResearch> {
+  const sources: { title: string; url: string; snippet: string }[] = [];
+  const evidence: string[] = [];
+  const queries = [
+    `"${productName}" 상품 상세 특징 사양`,
+    `"${productName}" 기능 사용 방법`,
+    `"${productName}" 리뷰 장점 단점`,
+  ];
+
+  for (const query of queries) {
+    try {
+      const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=6&setlang=ko&cc=kr`;
+      const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+      if (!response.ok) continue;
+      const html = await response.text();
+      const liRegex = /<li class="[^\"]*b_algo[^\"]*"[^>]*>([\s\S]*?)<\/li>/g;
+      let match: RegExpExecArray | null;
+      while ((match = liRegex.exec(html)) !== null && sources.length < 12) {
+        const block = match[1];
+        const title = stripHtml(block.match(/<h2[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i)?.[1] ?? "");
+        const snippet = stripHtml(block.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? "");
+        const href = block.match(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"/i)?.[1] ?? "";
+        const cleanSnippet = `${title} ${snippet}`.trim();
+        if (title && cleanSnippet.length >= 20) {
+          const sourceUrl = href.startsWith("http") ? href : "";
+          if (!sources.some((item) => item.title === title && item.snippet === snippet)) {
+            sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });
+          }
+        }
+      }
+    } catch {
+      // 한 검색 결과가 실패해도 나머지 조사 결과로 계속합니다.
+    }
+  }
+
+  // 상품 URL도 직접 읽어 메타 설명에서 확인 가능한 정보를 보강합니다.
+  if (productUrl && /^https?:\/\//i.test(productUrl)) {
+    try {
+      const response = await fetch(productUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+      if (response.ok) {
+        const html = await response.text();
+        const title = stripHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+        const description = stripHtml(html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([\s\S]*?)["']/i)?.[1] ?? "");
+        const snippet = `${title} ${description}`.trim();
+        if (snippet) sources.unshift({ title: title || productName, url: productUrl, snippet: snippet.slice(0, 900) });
+      }
+    } catch {
+      // 판매 페이지 직접 접근이 막혀도 검색 조사 결과를 사용합니다.
+    }
+  }
+
+  // 상품명과 가장 가까운 조사 결과를 근거 문장으로 보존합니다.
+  for (const source of sources.slice(0, 8)) {
+    const text = `${source.title} ${source.snippet}`;
+    if (new RegExp(productName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(text) || evidence.length < 5) {
+      evidence.push(text.slice(0, 700));
+    }
+  }
+
+  return {
+    productName,
+    sources: sources.slice(0, 12),
+    evidence: [...new Set(evidence)].slice(0, 8),
+    researchedAt: new Date().toISOString(),
+  };
 }
 
 /** 오늘의 상품 검색 주제를 정합니다. */
@@ -419,6 +501,7 @@ async function generateBlog(
   usedTitles: string[],
   opinionSignals: string[],
   imageUrls: string[],
+  research: ProductResearch,
   qualityFeedback: string[] = [],
 ) {
   const opinionText = opinionSignals.length ? opinionSignals.join("\n") : "충분한 공개 의견 신호 없음";
@@ -433,13 +516,17 @@ async function generateBlog(
 로켓배송: ${product.isRocket ? "예" : "아니오"}
 무료배송: ${product.isFreeShipping ? "예" : "아니오"}
 
+[팩트체크용 제품 조사 결과]
+${JSON.stringify(research, null, 2)}
+
 [참고용 사용자 의견 신호]
 ${opinionText}
 
 [작성 목표]
 - 광고 문구를 늘어놓는 글이 아니라, 사람이 실제로 구매를 고민할 때 도움이 되는 글을 만든다.
-- 상품명만 보고 확정할 수 없는 기능/소재/크기/구성품/성능은 절대 만들어내지 않는다.
-- 참고 의견은 '이 상품의 실제 구매자 리뷰'라고 단정하지 않는다. 정확한 상품 리뷰인지 확인되지 않았다면 본문에서 구체적인 후기처럼 인용하지 않는다.
+- 상품명만 보고 특징을 만들지 않는다. 반드시 [팩트체크용 제품 조사 결과]의 공개 자료에서 확인되는 특징만 설명한다.
+- 조사 자료에서 확인되지 않는 기능/소재/크기/구성품/성능은 절대 만들어내지 않는다.
+- 공개 검색 자료는 제품 특징 확인용 근거로 사용하되, 실제 구매자 후기인지 확인되지 않은 내용은 후기처럼 쓰지 않는다.
 - 직접 사용한 것처럼 '써보니', '사용해보니', '내돈내산' 같은 표현을 쓰지 않는다.
 - 가격은 현재 API 검색 결과의 스냅샷일 뿐이므로 본문에서 가격을 고정값처럼 강조하지 않는다. 할인/최저가를 주장하지 않는다.
 - 가성비라는 단어를 쓰더라도 근거 없는 단정 대신 '가격과 용도를 함께 비교해보는 것이 좋다' 정도로 표현한다.
@@ -515,6 +602,8 @@ async function createContent(env: Env, keyword: string) {
 
   const history = await getHistory(env);
   const recommendation = await recommendProduct(env, keyword, products, history.productIds);
+  // 상품을 한 번 조사하고, 같은 조사 결과를 본문 작성과 최종 팩트체크에 공통 사용합니다.
+  const research = await researchProduct(recommendation.product.productName, recommendation.product.productUrl);
   const opinionSignals = await fetchOpinionSignals(recommendation.product.productName);
   const imageUrls = await fetchRelatedImages(recommendation.product.productName, recommendation.product.productImage);
   // 품질 점수가 90점 이상이 될 때까지 생성 결과를 다시 만듭니다.
@@ -531,6 +620,7 @@ async function createContent(env: Env, keyword: string) {
       history.titles,
       opinionSignals,
       imageUrls,
+      research,
       qualityFeedback,
     );
 
@@ -553,10 +643,24 @@ async function createContent(env: Env, keyword: string) {
     }
   }
 
+  // 품질검사 이후 최종 본문에 대해 팩트체크를 정확히 한 번 수행합니다.
+  const factCheck = factCheckContent({
+    product: recommendation.product,
+    keyword,
+    body: blog.body,
+    selectedTitle: blog.selectedTitle,
+    research,
+  });
+  if (!factCheck.ok) {
+    throw new Error(`팩트체크 실패로 게시하지 않았습니다: ${factCheck.reasons.join(" · ")}`);
+  }
+
   const content = {
     keyword,
     recommendation,
     blog,
+    research,
+    factCheck,
     quality: {
       imageCount: imageUrls.length,
       opinionSignalCount: opinionSignals.length,
