@@ -1,0 +1,83 @@
+name: Rebuild product post structure
+
+on:
+  push:
+    paths:
+      - ".rebuild-product-post"
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace fallback generator
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("cloudflare/src/index.ts")
+          s = p.read_text(encoding="utf-8")
+          start = s.index('  if (prompt.includes("[확인된 상품 정보]")) {')
+          end = s.index('  return JSON.stringify({ keyword: "생활용품", source: "fallback" });', start)
+          new = r'''  if (prompt.includes("[확인된 상품 정보]")) {
+    const keyword = prompt.match(/검색 주제:\s*(.+)/)?.[1]?.trim() || "상품 정보";
+    const productName = prompt.match(/상품명:\s*(.+)/)?.[1]?.trim() || keyword;
+
+    // 상품명에 실제로 표시된 단어만 특징으로 사용합니다. 없는 스펙은 만들지 않습니다.
+    const tokens = productName.split(/\s+/).filter(Boolean);
+    const featurePatterns = [
+      /LED/i, /링라이트/i, /조명/i, /촬영/i, /핸드폰/i, /스마트폰/i, /거치대/i,
+      /높이조절/i, /높이조절/i, /유튜브/i, /수직촬영/i, /무선/i, /청소/i, /필터/i,
+      /브러시/i, /침구/i, /캠핑/i, /보온/i, /은박/i, /방한/i, /마라톤/i, /계곡/i,
+      /등산/i, /러닝/i, /주방/i, /차량/i, /수납/i, /휴대/i, /접이식/i, /충전/i,
+      /블루투스/i, /이어폰/i, /키보드/i, /마우스/i, /공기청정/i
+    ];
+    const features = [...new Set(tokens.filter((token) => featurePatterns.some((pattern) => pattern.test(token))))];
+    const featureText = features.length ? features.join(", ") : productName;
+
+    // 상품명에서 확인되는 특징을 실제 상품 소개에 사용합니다.
+    const featureDescriptions = features.map((feature) => {
+      if (/LED|링라이트|조명/i.test(feature)) return `${feature}가 포함된 촬영 조명 제품으로 표시되어 있습니다.`;
+      if (/촬영|유튜브|수직촬영/i.test(feature)) return `${feature} 용도로 상품명이 구성되어 있어 영상이나 사진 촬영 관련 용도로 소개되고 있습니다.`;
+      if (/핸드폰|스마트폰/i.test(feature)) return `${feature} 관련 사용을 전제로 한 제품명으로 확인됩니다.`;
+      if (/거치대/i.test(feature)) return `${feature}가 포함되어 있어 기기를 고정해 사용하는 용도의 제품으로 표시되어 있습니다.`;
+      if (/높이조절/i.test(feature)) return `${feature}이라는 특징이 상품명에 직접 표시되어 있습니다.`;
+      if (/무선/i.test(feature)) return `상품명에 무선 제품으로 표시되어 있습니다.`;
+      if (/청소/i.test(feature)) return `청소 용도로 표시된 제품입니다.`;
+      if (/필터/i.test(feature)) return `상품명에 필터가 포함된 구성으로 표시되어 있습니다.`;
+      if (/브러시/i.test(feature)) return `상품명에 브러시가 포함된 구성으로 표시되어 있습니다.`;
+      if (/침구/i.test(feature)) return `침구 관련 용도가 상품명에 표시되어 있습니다.`;
+      if (/캠핑|마라톤|계곡|등산|러닝|방한|보온/i.test(feature)) return `${feature} 관련 사용처가 상품명에 직접 표시되어 있습니다.`;
+      if (/충전/i.test(feature)) return `상품명에 충전 관련 특징이 표시되어 있습니다.`;
+      if (/블루투스|이어폰|키보드|마우스/i.test(feature)) return `${feature} 관련 제품으로 상품명에서 확인됩니다.`;
+      return `${feature}이라는 특징이 상품명에 표시되어 있습니다.`;
+    });
+    const introduction = featureDescriptions.length
+      ? featureDescriptions.join(" ")
+      : `상품명에서 확인되는 정보는 ${productName}이라는 제품명입니다.`;
+
+    const titles = [
+      `${productName} 특징과 활용 방법 정리`,
+      `${keyword}로 찾은 ${productName} 제품 소개`,
+      `${productName} 어떤 용도로 사용하기 좋을까`,
+      `${productName} 제품 특징과 추천 사용처`,
+      `${productName} 장점과 활용 포인트 살펴보기`,
+    ];
+
+    const body = `안녕하세요. 오늘은 ${keyword} 검색 결과에서 확인된 ${productName}을 소개해볼게요. 상품명에 표시된 내용을 중심으로 어떤 특징이 있는지, 어떤 상황에서 활용하기 좋은지 자연스럽게 정리해보겠습니다.\n\n제품 소개\n${productName}은 상품명에서 ${featureText} 등의 표현이 확인되는 제품입니다. ${introduction} 상품명에 여러 특징이 함께 적혀 있는 만큼 필요한 용도와 맞는지 살펴보기 좋은 제품입니다. 다만 상품명만으로 확인할 수 없는 세부 사양이나 구성은 임의로 덧붙이지 않고, 실제 상품 상세 페이지에 표시된 내용을 기준으로 확인하는 것이 좋습니다.\n\n추천 이유\n이 제품을 살펴볼 때 가장 눈에 들어오는 부분은 상품명에 사용 목적이나 특징이 비교적 구체적으로 표시되어 있다는 점입니다. ${featureText}와 같은 표현이 필요한 사람이라면 검색 결과에서 원하는 용도의 제품을 찾을 때 참고하기 좋습니다. 특히 한 가지 용도만 보는 것보다 내가 실제로 사용할 상황을 먼저 생각해보면 제품을 선택하기가 편합니다.\n\n장점\n상품명에서 확인되는 특징을 한눈에 파악하기 쉽다는 점이 장점입니다. ${featureText}처럼 사용 목적과 관련된 표현이 포함되어 있어 필요한 제품을 찾는 과정에서 비교 기준을 잡기 좋습니다. 또한 상품명에 여러 특징이 함께 표시되어 있다면 본인이 필요한 부분을 빠르게 확인할 수 있습니다. 여기까지는 상품명에서 직접 확인되는 내용을 기준으로 한 장점이며, 실제 성능이나 만족도는 상세 정보와 사용 환경에 따라 달라질 수 있습니다.\n\n단점\n반대로 상품명만으로는 모든 세부 내용을 알기 어렵다는 점은 아쉬울 수 있습니다. ${featureText}라는 표현이 확인되더라도 실제 옵션이나 구성, 세부 기능은 상품 상세 페이지에서 확인해야 합니다. 따라서 검색 결과의 상품명만 보고 필요한 조건을 모두 충족한다고 판단하기보다는 원하는 기능이나 구성이 실제로 포함되어 있는지 확인하는 과정이 필요합니다.\n\n어디에 사용하면 좋은지\n상품명에 표시된 ${featureText}를 기준으로 보면 해당 특징이 필요한 상황에서 활용하기 좋은 제품으로 볼 수 있습니다. 예를 들어 촬영이나 거치 관련 표현이 있다면 촬영 환경을 준비할 때 살펴볼 수 있고, 청소나 브러시 같은 표현이 있다면 해당 청소 용도로 비교해볼 수 있습니다. 캠핑이나 등산처럼 특정 활동이 상품명에 표시된 경우에는 해당 활동을 준비하면서 필요한 용도인지 확인해보면 좋습니다. 실제 사용 범위는 상품 상세 페이지의 안내를 기준으로 판단해주세요.\n\n추천 사용처\n${featureText}와 관련된 일상적인 사용 환경에서 먼저 비교해보는 것을 추천합니다. 집에서 필요한 제품인지, 촬영이나 작업 공간에서 필요한 제품인지, 또는 특정 야외 활동을 위해 필요한 제품인지 본인의 상황에 맞춰 생각해보면 선택하기가 쉽습니다. 상품명이 보여주는 특징과 내가 필요한 용도가 잘 맞는다면 후보 상품으로 살펴볼 만합니다.\n\n상품을 선택할 때는 여러 정보를 무리하게 추측하기보다 상품명에서 확인되는 특징과 실제 상세 페이지의 내용을 함께 비교하는 것이 좋습니다. 특히 옵션으로 선택하는 항목이 있는지, 기본 구성에 포함되는 내용이 무엇인지처럼 구매에 직접 필요한 부분은 상품 페이지에서 확인해보세요. 이렇게 필요한 부분만 확인하면 검색 결과를 훨씬 편하게 비교할 수 있습니다.\n\n관심이 있다면 아래 상품 확인 버튼을 통해 현재 판매 페이지의 상세 내용을 직접 살펴보세요. 오늘은 ${productName}의 상품명에서 확인할 수 있는 특징과 활용 방향을 중심으로 정리해봤습니다. 본인에게 필요한 용도와 잘 맞는지 천천히 비교해보시면 좋겠습니다.\n\n읽어주셔서 감사합니다. 다음에도 실제 상품 정보에서 확인할 수 있는 내용을 중심으로 알기 쉽게 소개해드릴게요.`;
+
+    return JSON.stringify({ titles, selectedTitle: titles[0], body });
+  }
+'''
+          s = s[:start] + new + s[end:]
+          p.write_text(s, encoding="utf-8")
+      - name: Commit repaired generator
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloudflare/src/index.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "Rewrite product post structure"
+          git push
