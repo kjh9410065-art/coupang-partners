@@ -14,3 +14,4 @@ new = '''    // 상품명에서 확인되는 특징을 중심으로 자연스러
 
 s = s[:start] + new + s[end:]
 p.write_text(s, encoding="utf-8")
+# 구조 변경 로직 재실행을 위해 이 파일을 갱신합니다.
