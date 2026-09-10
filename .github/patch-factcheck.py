@@ -253,5 +253,3 @@ s = s.replace(needle, insert)
 s = s.replace('    blog,\n    quality: {', '    blog,\n    research,\n    factCheck,\n    quality: {')
 
 INDEX.write_text(s, encoding="utf-8")
-''')
-
