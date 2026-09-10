@@ -250,6 +250,30 @@ async function researchProduct(productName: string, productUrl: string): Promise
           }
         }
       }
+
+      // 일반 검색 HTML이 비어 있거나 구조가 바뀐 경우 Bing RSS로 한 번 더 확보합니다.
+      if (!sources.length) {
+        try {
+          const rssUrl = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
+          const rssResponse = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+          if (rssResponse.ok) {
+            const rss = await rssResponse.text();
+            for (const item of rss.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+              if (sources.length >= 12) break;
+              const block = item[1];
+              const title = stripHtml(block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+              const href = stripHtml(block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] ?? "");
+              const description = stripHtml(block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "");
+              const snippet = `${title} ${description}`.trim();
+              if (title && snippet.length >= 20) {
+                sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+              }
+            }
+          }
+        } catch {
+          // RSS도 실패하면 상품 API 확정값을 이용한 최소 팩트체크로 넘어갑니다.
+        }
+      }
     } catch {
       // 한 검색 결과가 실패해도 나머지 조사 결과로 계속합니다.
     }
