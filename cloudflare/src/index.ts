@@ -137,7 +137,11 @@ async function generateGemini(env: Env, prompt: string, maxOutputTokens = 4096):
     let research: any = null;
     try { research = researchMatch ? JSON.parse(researchMatch[1]) : null; } catch {}
     const evidence = Array.isArray(research?.evidence) ? research.evidence.slice(0, 5) : [];
-    const evidenceText = evidence.length ? evidence.join("\n") : "공개 조사 자료에서 충분한 제품 특징을 확인하지 못했습니다.";
+    // 검색엔진의 제목/스니펫 원문은 본문에 그대로 넣지 않고,
+    // 확인 자료가 있다는 사실만 자연스럽게 반영합니다.
+    const evidenceText = evidence.length
+      ? `공개 자료 ${evidence.length}건을 대조해 상품명과 일치하는 정보를 우선 확인했습니다. 검색 결과의 제목이나 스니펫을 그대로 옮기지 않고, 서로 맞지 않는 자료는 제외했습니다.`
+      : "공개 조사 자료에서 상품과 직접 일치하는 제품 특징을 충분히 확인하지 못했습니다.";
     const titles=[
       `${productName} 실제 확인 정보와 주요 특징 정리`,
       `${keyword} 관련 ${productName} 특징과 확인할 점`,
@@ -245,7 +249,11 @@ async function researchProduct(productName: string, productUrl: string): Promise
         const cleanSnippet = `${title} ${snippet}`.trim();
         if (title && cleanSnippet.length >= 20) {
           const sourceUrl = href.startsWith("http") ? href : "";
-          if (!sources.some((item) => item.title === title && item.snippet === snippet)) {
+          // 상품명과 무관한 검색 결과(예: Microsoft 도움말)는 근거에서 완전히 제외합니다.
+          const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+          const searchable = cleanSnippet.toLowerCase();
+          const relevant = productTokens.length === 0 || productTokens.some((token) => searchable.includes(token));
+          if (relevant && !sources.some((item) => item.title === title && item.snippet === snippet)) {
             sources.push({ title, url: sourceUrl, snippet: cleanSnippet.slice(0, 700) });
           }
         }
@@ -266,7 +274,12 @@ async function researchProduct(productName: string, productUrl: string): Promise
               const description = stripHtml(block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "");
               const snippet = `${title} ${description}`.trim();
               if (title && snippet.length >= 20) {
-                sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+                const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+                const searchable = snippet.toLowerCase();
+                const relevant = productTokens.length === 0 || productTokens.some((token) => searchable.includes(token));
+                if (relevant) {
+                  sources.push({ title, url: href.startsWith("http") ? href : "", snippet: snippet.slice(0, 700) });
+                }
               }
             }
           }
@@ -295,12 +308,13 @@ async function researchProduct(productName: string, productUrl: string): Promise
     }
   }
 
-  // 상품명과 가장 가까운 조사 결과를 근거 문장으로 보존합니다.
+  // 상품명 핵심 토큰이 실제로 포함된 자료만 본문 생성용 근거로 보존합니다.
+  const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
   for (const source of sources.slice(0, 8)) {
     const text = `${source.title} ${source.snippet}`;
-    if (new RegExp(productName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(text) || evidence.length < 5) {
-      evidence.push(text.slice(0, 700));
-    }
+    const searchable = text.toLowerCase();
+    const relevant = productTokens.length === 0 || productTokens.some((token) => searchable.includes(token));
+    if (relevant) evidence.push(text.slice(0, 700));
   }
 
   return {
@@ -471,7 +485,15 @@ async function fetchRelatedImages(productName: string, officialImage: string): P
         const candidate = decodeBingUrl(match[1]);
         if (!candidate || !/^https?:\/\//i.test(candidate)) continue;
         if (images.some((item) => item === candidate)) continue;
-        if (/logo|icon|sprite|avatar|favicon/i.test(candidate)) continue;
+        if (/logo|icon|sprite|avatar|favicon|microsoft|windows/i.test(candidate)) continue;
+
+        // 이미지 URL만으로 관련성을 판단할 수 없는 경우가 많으므로,
+        // 해당 이미지가 포함된 Bing 결과 주변 텍스트에서 상품명 토큰을 확인합니다.
+        const matchIndex = html.indexOf(match[0]);
+        const context = html.slice(Math.max(0, matchIndex - 1200), Math.min(html.length, matchIndex + 1200)).toLowerCase();
+        const productTokens = productName.toLowerCase().split(/\s+/).filter((token) => token.length >= 2);
+        const relevant = productTokens.length === 0 || productTokens.some((token) => context.includes(token));
+        if (!relevant) continue;
 
         // 실제 이미지 응답인지 간단히 확인합니다. 실패하면 후보에서 제외합니다.
         if (await isImageUrl(candidate)) images.push(candidate);
