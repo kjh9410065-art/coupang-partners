@@ -255,7 +255,3 @@ s = s.replace('    blog,\n    quality: {', '    blog,\n    research,\n    factCh
 INDEX.write_text(s, encoding="utf-8")
 ''')
 
-# 일회성 수정 워크플로우를 만들고 다음 단계에서 스스로 삭제합니다.
-WF = ROOT / ".github" / "workflows" / "apply-factcheck-patch.yml"
-WF.parent.mkdir(parents=True, exist_ok=True)
-WF.write_text('''name: Apply factcheck patch\n\non:\n  push:\n    paths:\n      - ".github/patch-factcheck.py"\n\npermissions:\n  contents: write\n\njobs:\n  patch:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: "3.12"\n      - run: python .github/patch-factcheck.py\n      - name: Commit patch\n        run: |\n          git config user.name "github-actions[bot]"\n          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"\n          git add cloudflare/src/index.ts cloudflare/src/factcheck.ts\n          git commit -m "Add product research and one-pass factcheck" || exit 0\n          git push\n      - name: Remove temporary patch files\n        run: |\n          rm -f .github/patch-factcheck.py .github/workflows/apply-factcheck-patch.yml\n          git add -A\n          git commit -m "Remove temporary factcheck patch workflow" || exit 0\n          git push\n''', encoding="utf-8")
