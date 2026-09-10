@@ -11,6 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Patch article generator
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -19,42 +20,51 @@ jobs:
           start = s.index('  if (prompt.includes("[확인된 상품 정보]")) {')
           end = s.index('  return JSON.stringify({ keyword: "생활용품", source: "fallback" });', start)
           new = '''  if (prompt.includes("[확인된 상품 정보]")) {
-            const keyword = prompt.match(/검색 주제:\\s*(.+)/)?.[1]?.trim() || "상품 정보";
-            const productName = prompt.match(/상품명:\\s*(.+)/)?.[1]?.trim() || keyword;
+    const keyword = prompt.match(/검색 주제:\\s*(.+)/)?.[1]?.trim() || "상품 정보";
+    const productName = prompt.match(/상품명:\\s*(.+)/)?.[1]?.trim() || keyword;
 
-            // 상품명에 실제로 포함된 표현만 특징 후보로 사용합니다.
-            const featureWords = productName
-              .split(/\\s+/)
-              .filter(Boolean)
-              .filter((word) => /LED|링라이트|조명|촬영|핸드폰|스마트폰|거치대|높이조절|유튜브|수직촬영|캠핑|보온|은박|마라톤|계곡|등산|러닝|실버|방한|보온용품|수납|정리|접이식|휴대용|충전|블루투스|무선|키보드|마우스|이어폰|스피커|텀블러|보냉|보온병/i.test(word));
-            const features = [...new Set(featureWords)];
-            const featureText = features.length ? features.join(", ") : "상품명에서 확인되는 기본 특징";
+    // 상품명에서 특징을 추출하지 않습니다. 공개 조사 결과만 근거로 사용합니다.
+    let evidence: string[] = [];
+    try {
+      const researchMatch = prompt.match(/\\[팩트체크용 제품 조사 결과\\]\\s*([\\s\\S]*?)\\n\\n\\[참고용 사용자 의견 신호\\]/);
+      if (researchMatch) {
+        const research = JSON.parse(researchMatch[1]);
+        evidence = Array.isArray(research?.evidence)
+          ? research.evidence.filter((x) => typeof x === "string" && x.trim()).map((x) => x.replace(/\\s+/g, " ").trim())
+          : [];
+      }
+    } catch {}
 
-            // 제목은 상품 자체를 중심으로 만들고 반복적인 구매 안내 문구를 제거합니다.
-            const titles = [
-              `${productName} 제품 특징과 활용 방법`,
-              `${productName} 어떤 제품인지 간단하게 알아보기`,
-              `${productName} 주요 특징과 추천 사용처`,
-              `${productName} 장점과 아쉬운 점 정리`,
-              `${productName} 이런 용도로 활용하기 좋은 제품`,
-            ];
+    const usableEvidence = [...new Set(evidence)].slice(0, 4);
+    const detail = usableEvidence.length
+      ? usableEvidence.join(" ")
+      : "공개 조사에서 확인된 상세 설명이 부족합니다.";
 
-            // 가격·배송·검색순위는 본문에 넣지 않습니다.
-            const body = `안녕하세요. 오늘은 ${productName}을 자연스럽게 소개해볼게요.\\n\\n제품소개\\n${productName}은 상품명에서 ${featureText} 등의 표현을 확인할 수 있는 제품입니다. 상품명에 표시된 특징을 중심으로 어떤 제품인지 살펴볼 수 있습니다. 상품명에서 확인되지 않는 세부 사양이나 성능은 임의로 추가하지 않습니다.\\n\\n추천이유\\n${keyword} 관련 제품을 찾고 있고 상품명에 표시된 ${featureText}가 필요한 분이라면 비교해볼 만한 제품입니다. 필요한 용도와 상품에 표시된 특징이 맞는지를 중심으로 살펴보면 선택하기 편합니다.\\n\\n장점\\n상품명에 ${featureText}처럼 용도나 특징이 비교적 명확하게 표시되어 있다는 점을 먼저 살펴볼 수 있습니다. 필요한 기능을 찾고 있다면 비슷한 제품과 비교할 때 기준을 잡기 좋습니다.\\n\\n단점\\n상품명만으로는 실제 크기, 구성, 세부 사양까지 모두 확인하기 어렵습니다. 표시된 특징이 기본 구성인지 선택 옵션인지도 상품 상세 페이지에서 확인해야 하므로 이름만 보고 모든 기능이 포함되어 있다고 판단하기는 어렵습니다.\\n\\n어디에 사용하면 좋은지\\n상품명에 표시된 ${featureText}와 관련된 용도로 활용하기 좋습니다. 내가 사용하려는 장소와 목적이 상품명에 표시된 용도와 맞는지 먼저 살펴보면 됩니다.\\n\\n추천사용처\\n${keyword} 관련 제품을 찾는 분이나 ${featureText}가 필요한 분, 비슷한 제품을 비교하면서 기본 특징부터 확인하고 싶은 분에게 추천할 만합니다. 실제 사용 환경에 맞는지는 상품 상세 페이지의 구성과 옵션을 함께 확인해보세요.\\n\\n마무리 인사\\n오늘은 ${productName}의 특징과 활용 방법을 중심으로 간단하게 소개해봤습니다. 필요한 용도와 상품의 특징이 잘 맞는지 살펴본 뒤 자세한 정보까지 확인해보시면 좋겠습니다. 관심이 있다면 아래 상품 확인 링크에서 제품 정보를 확인해보세요. 좋은 선택에 도움이 되었으면 좋겠습니다.`;
+    const titles = [
+      `${productName} 제품 소개와 활용 방법`,
+      `${productName} 특징과 추천 사용처 알아보기`,
+      `${productName} 어떤 분께 잘 맞을까?`,
+      `${productName} 장점과 아쉬운 점 정리`,
+      `${productName} 제품 정보와 활용 아이디어`,
+    ];
 
-            return JSON.stringify({ titles, selectedTitle: titles[0], body });
-          }
+    // 가격·배송·검색순위는 본문에 넣지 않고, 지정한 상품 소개 구조만 사용합니다.
+    const body = `안녕하세요. 오늘은 ${productName}을 제품 정보와 활용 방법 중심으로 소개해볼게요.\\n\\n제품소개\\n${productName}\\n\\n${detail}\\n\\n추천이유\\n${usableEvidence.length ? `공개 자료에서 확인되는 내용을 기준으로 보면 ${detail}와 관련된 용도로 살펴볼 만한 제품입니다.` : "현재 확인된 자료만으로 특정 기능이나 성능을 근거로 추천 이유를 단정하지 않았습니다."}\\n\\n장점\\n${usableEvidence.length ? `공개 자료에서 확인되는 내용 중 참고할 만한 부분은 ${detail}입니다.` : "확인되지 않은 기능을 장점으로 만들어내지 않았습니다."}\\n\\n단점\\n${usableEvidence.length ? "공개 자료에서 확인되지 않은 부분은 임의로 단점이라고 단정하지 않았습니다. 실제 구매 전에 상세 설명과 구성 정보를 확인하는 것이 좋습니다." : "현재 공개 자료가 부족해 특정 단점을 사실처럼 적지 않았습니다."}\\n\\n어디에 사용하면 좋은지\\n${usableEvidence.length ? `공개 자료에서 확인되는 내용과 실제 사용 목적이 맞는 경우 활용을 고려해볼 수 있습니다.` : "구체적인 사용처는 확인된 제품 설명을 기준으로 판단하는 것이 좋습니다."}\\n\\n추천사용처\\n${usableEvidence.length ? "제품의 공개 설명에 나온 용도와 본인의 사용 목적이 맞는 경우 비교 대상으로 추천할 수 있습니다." : "현재 확인된 자료만으로 특정 사용처를 임의로 추천하지 않았습니다."}\\n\\n파트너스 링크\\n관심이 있다면 아래 상품 확인 버튼을 통해 판매 페이지의 상세 정보를 확인해보세요.\\n\\n마무리 인사\\n오늘은 확인 가능한 자료를 기준으로 ${productName}을 간단하게 소개해봤습니다. 필요한 용도와 잘 맞는지 편하게 비교해보세요.`;
+
+    return JSON.stringify({ titles, selectedTitle: titles[0], body });
+  }
 
 '''
           s = s[:start] + new + s[end:]
           p.write_text(s, encoding="utf-8")
           PY
       - name: Commit and remove workflow
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add cloudflare/src/index.ts
-          git commit -m "Use natural product blog structure"
+          git commit -m "Use research-based product blog structure"
           git rm .github/workflows/replace-product-post-structure.yml
           git commit -m "Remove temporary structure patch workflow"
           git push
