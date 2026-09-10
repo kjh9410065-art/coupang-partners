@@ -119,3 +119,5 @@ ${productName}은 현재 쿠팡 상품 검색 결과에서 확인된 상품입�
           git rm .github/workflows/patch-offline-fallback.yml
           git commit -m "chore: remove one-time offline generation workflow"
           git push
+
+# trigger: rerun patch from a connector-authored commit
