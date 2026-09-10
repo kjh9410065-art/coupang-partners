@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/patch-factcheck.py"
+      - ".github/workflows/apply-factcheck-patch.yml"
 
 permissions:
   contents: write
