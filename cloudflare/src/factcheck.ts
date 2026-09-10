@@ -76,10 +76,14 @@ export function factCheckContent(input: {
     }
   }
 
-  // 배송/가격은 API 확정값과 다르면 사실 오류로 봅니다.
-  const price = input.product?.productPrice;
-  if (price && new RegExp(`${price.toLocaleString()}?\\s*원`).test(input.body.replaceAll(",", ""))) {
-    // 현재 가격을 언급했다면 API 값과 일치하는 경우만 허용합니다.
+  // 가격을 본문에 적는 경우에는 현재 쿠팡 API 가격과 정확히 일치해야 합니다.
+  // 가격이 확인되지 않으면 가격을 사실처럼 쓰지 못하게 차단합니다.
+  const priceMentions = input.body.match(/\d{1,3}(?:,\d{3})*\s*원/g) ?? [];
+  const price = Number(input.product?.productPrice) || 0;
+  if (priceMentions.length) {
+    const normalizedPrice = price.toLocaleString("ko-KR");
+    const invalidPrice = price <= 0 || priceMentions.some((mention) => !mention.replace(/\s/g, "").startsWith(`${normalizedPrice}원`));
+    if (invalidPrice) reasons.push("본문의 가격 정보가 현재 쿠팡 검색 결과 가격과 일치하지 않습니다.");
   }
 
   if (/최저가|최저 가격|역대급|무조건|100% 만족|완벽|최고의 제품/i.test(input.body)) {
