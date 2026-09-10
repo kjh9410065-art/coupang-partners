@@ -5,7 +5,6 @@
 
 export interface PreviewEnv { CONTENT_STORE: KVNamespace; }
 
-/** HTML에 안전하게 표시할 문자열로 변환합니다. */
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -15,7 +14,6 @@ function escapeHtml(value: unknown) {
     .replaceAll("'", "&#039;");
 }
 
-/** 저장된 최신 글의 구조를 읽기 쉽게 통일합니다. */
 function getBlog(record: any) {
   return record?.blog ?? record?.content ?? {};
 }
@@ -31,14 +29,12 @@ function renderBody(body: string, images: string[]) {
   const imageCount = Math.min(images.length, 3);
 
   paragraphs.forEach((paragraph, index) => {
-    // 일반 문단은 그대로 표시하고 ### 소제목은 별도 제목으로 표시합니다.
     if (/^#{1,3}\s+/.test(paragraph)) {
       output.push(`<h2>${escapeHtml(paragraph.replace(/^#{1,3}\s+/, ""))}</h2>`);
     } else {
       output.push(`<p>${escapeHtml(paragraph)}</p>`);
     }
 
-    // 본문을 읽는 흐름을 유지하면서 이미지가 중간에 들어가도록 배치합니다.
     const target = imageCount === 1
       ? (index === 2 ? 0 : -1)
       : imageCount === 2
@@ -50,7 +46,6 @@ function renderBody(body: string, images: string[]) {
     }
   });
 
-  // 본문이 짧아도 확보된 이미지는 빠뜨리지 않습니다.
   for (let index = 0; index < imageCount; index++) {
     const marker = `상품 이미지 ${index + 1}`;
     if (!output.some((item) => item.includes(marker))) {
@@ -61,7 +56,6 @@ function renderBody(body: string, images: string[]) {
   return output.join("\n");
 }
 
-/** 최신 생성 글의 실제 게시 전 미리보기 화면을 렌더링합니다. */
 export async function renderPreview(env: PreviewEnv): Promise<Response> {
   const record = await env.CONTENT_STORE.get("latest", "json") as any;
   if (!record) {
@@ -116,7 +110,7 @@ figcaption{font-size:11px;color:#8a919b;margin-top:5px}
     <div class="body">${renderBody(blog.body ?? "", images)}</div>
   </section>
   ${partnerUrl ? `<a class="partner" href="${escapeHtml(partnerUrl)}" target="_blank" rel="noopener noreferrer">상품 확인하기</a>` : ""}
-  <div class="fact">상품 정보와 배송 조건은 생성 당시 쿠팡 API 검색 결과를 기준으로 작성되었습니다. 실제 판매 페이지의 최신 정보와 차이가 있을 수 있습니다.</div>
+  <div class="fact">상품 설명은 확인 가능한 상품 정보와 조사 자료를 기준으로 작성했습니다. 상세 기능과 구성은 상품 페이지에서 최종 확인해주세요.</div>
 </article></main></body></html>`;
 
   return new Response(html, {
