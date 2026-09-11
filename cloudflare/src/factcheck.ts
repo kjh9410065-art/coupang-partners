@@ -58,20 +58,23 @@ export function factCheckContent(input: {
     ...input.research.sources.map((source) => `${source.title} ${source.snippet}`),
   ].join("\n"));
   const body = normalize(input.body);
+  const title = normalize(input.selectedTitle);
+  const productName = normalize(String(input.product?.productName ?? ""));
 
-  if (!body.includes(normalize(String(input.product?.productName ?? "")))) {
-    reasons.push("본문에 확인된 상품명이 포함되지 않았습니다.");
-  }
+  // 상품명은 최종 글의 제목에만 표시하는 정책입니다.
+  // 본문에 상품명이 없다는 이유로 팩트체크를 실패시키지 않습니다.
+  if (!title) reasons.push("선정된 제목이 비어 있습니다.");
+  if (productName && !title && !input.body) reasons.push("상품 제목과 본문이 비어 있습니다.");
 
   if (!input.research.sources.length && !input.research.evidence.length) {
     reasons.push("상품 외부 조사 결과가 없어 제품 특징을 검증할 근거가 없습니다.");
   }
 
   // 숫자/사양 주장은 조사 결과 또는 쿠팡 상품명에서 확인되는 경우에만 통과시킵니다.
+  const compactCorpus = corpus.replace(/\s+/g, "");
   for (const claim of claims) {
     const normalizedClaim = normalize(claim);
     const compactClaim = normalizedClaim.replace(/\s+/g, "");
-    const compactCorpus = corpus.replace(/\s+/g, "");
     if (!compactCorpus.includes(compactClaim)) {
       reasons.push(`확인되지 않은 상품 정보가 포함되었습니다: ${claim}`);
       if (reasons.length >= 6) break;
@@ -84,7 +87,9 @@ export function factCheckContent(input: {
   const price = Number(input.product?.productPrice) || 0;
   if (priceMentions.length) {
     const normalizedPrice = price.toLocaleString("ko-KR");
-    const invalidPrice = price <= 0 || priceMentions.some((mention) => !mention.replace(/\s/g, "").startsWith(`${normalizedPrice}원`));
+    const invalidPrice =
+      price <= 0 ||
+      priceMentions.some((mention) => !mention.replace(/\s/g, "").startsWith(`${normalizedPrice}원`));
     if (invalidPrice) reasons.push("본문의 가격 정보가 현재 쿠팡 검색 결과 가격과 일치하지 않습니다.");
   }
 
