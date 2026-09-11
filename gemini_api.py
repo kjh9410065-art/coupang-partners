@@ -15,16 +15,17 @@ FORBIDDEN_PHRASES = (
 )
 
 
-def _extract(prompt, label, next_label=None):
-    """프롬프트에서 특정 항목의 값을 안전하게 꺼냅니다."""
-    pattern = rf"{re.escape(label)}:\s*(.*?)(?=\n\[|\n[A-Za-z가-힣].*?:|$)"
+def _extract(prompt, label):
+    """프롬프트에서 일반 항목 또는 [섹션]의 값을 꺼냅니다."""
+    if label.startswith("["):
+        # [섹션] 형태는 다음 [섹션]이 시작되기 전까지의 내용을 가져옵니다.
+        pattern = rf"{re.escape(label)}\s*\n?(.*?)(?=\n\[|$)"
+    else:
+        # 일반 항목은 같은 줄의 콜론 뒤 값을 가져옵니다.
+        pattern = rf"{re.escape(label)}:\s*(.*?)(?=\n[A-Za-z가-힣].*?:|\n\[|$)"
+
     match = re.search(pattern, prompt, re.DOTALL)
-    if not match:
-        return ""
-    value = match.group(1).strip()
-    if next_label and next_label in value:
-        value = value.split(next_label, 1)[0].strip()
-    return value
+    return match.group(1).strip() if match else ""
 
 
 def _clean_name(name):
@@ -52,14 +53,10 @@ def _make_titles(prompt):
 def _make_body(prompt):
     """프롬프트에 들어온 확인 가능한 정보만으로 짧고 자연스러운 글을 만듭니다."""
     title = _extract(prompt, "[선택한 제목]")
-    # 제목 뒤의 다음 섹션이 시작되기 전까지만 사용합니다.
-    title = title.split("[실제 상품 정보]", 1)[0].strip()
-
     name = _clean_name(_extract(prompt, "상품명"))
     rocket = _extract(prompt, "로켓배송 여부")
     free_shipping = _extract(prompt, "무료배송 여부")
     partner_url = _extract(prompt, "[마지막 링크]")
-    partner_url = partner_url.split("[", 1)[0].strip()
 
     if not name:
         raise Exception("상품명을 확인할 수 없습니다.")
