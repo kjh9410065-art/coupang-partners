@@ -5,7 +5,7 @@
  * 1. Google Trends 한국 급상승 검색어를 가져옵니다.
  * 2. 상품으로 연결할 수 있는 검색어를 쿠팡에서 검색합니다.
  * 3. 쿠팡 검색 순위 1위부터 순서대로 후보를 사용합니다.
- * 4. 일반 조회는 1위, 다시 보기는 2위 → 3위 → 4위 순서로 보여줍니다.
+ * 4. 상품 URL을 쿠팡 파트너스 딥링크(단축 URL)로 변환합니다.
  */
 
 export interface RecommendEnv {
@@ -16,15 +16,15 @@ export interface RecommendEnv {
 
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
-// 기존 캐시와 분리해서 새 순위 방식이 바로 적용되도록 버전을 올립니다.
-const DAILY_KEY = "recommend:today:v2";
+const COUPANG_DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink";
+const DAILY_KEY = "recommend:today:v3";
 
 const BLOCKED_WORDS = [
   "대통령", "국회", "선거", "정치", "사망", "사건", "사고", "축구", "야구", "농구",
   "선수", "배우", "가수", "연예", "드라마", "영화", "날씨", "태풍", "지진", "뉴스"
 ];
 
-async function createAuthorization(env: RecommendEnv, method: string, path: string, query: string) {
+async function createAuthorization(env: RecommendEnv, method: string, path: string, query = "") {
   const signedDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").slice(2);
   const message = signedDate + method.toUpperCase() + path + query;
   const key = await crypto.subtle.importKey(
@@ -69,6 +69,27 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
     .sort((a: any, b: any) => a.rank - b.rank);
 }
 
+/** 쿠팡 일반 상품 URL을 파트너스 추적 단축 URL로 변환합니다. */
+async function createPartnerShortUrl(env: RecommendEnv, productUrl: string) {
+  const body = JSON.stringify({ coupangUrls: [productUrl] });
+  const response = await fetch(`${COUPANG_HOST}${COUPANG_DEEPLINK_PATH}`, {
+    method: "POST",
+    headers: {
+      Authorization: await createAuthorization(env, "POST", COUPANG_DEEPLINK_PATH),
+      "Content-Type": "application/json;charset=UTF-8",
+    },
+    body,
+  });
+
+  const text = await response.text();
+  if (!response.ok) throw new Error(`파트너스 딥링크 오류 (${response.status})`);
+
+  const data = JSON.parse(text);
+  const link = data?.data?.[0];
+  if (!link?.shortenUrl) throw new Error("파트너스 단축링크 생성 실패");
+  return String(link.shortenUrl);
+}
+
 async function getGoogleTrends(): Promise<string[]> {
   try {
     const response = await fetch("https://trends.google.com/trending/rss?geo=KR", {
@@ -97,19 +118,13 @@ function decodeXml(value: string) {
     .replace(/&gt;/g, ">");
 }
 
-/**
- * 처음에는 1위를 보여주고,
- * 다시 보기에서는 현재 순위보다 한 단계 낮은 상품을 우선 보여줍니다.
- * 예: 1위 → 2위 → 3위 → 4위
- */
+/** 현재 순위 다음 상품을 선택합니다. 1위 → 2위 → 3위 순서입니다. */
 function pickByRank(products: any[], currentRank?: number) {
   if (!products.length) return null;
-
   if (currentRank) {
     const next = products.find((product) => product.rank > currentRank);
     if (next) return next;
   }
-
   return products[0];
 }
 
@@ -119,7 +134,6 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
     ? await env.CONTENT_STORE.get(DAILY_KEY, "json") as any
     : null;
 
-  // 처음 접속하면 오늘의 1위 상품을 그대로 보여줍니다.
   if (!refresh && cached?.date === today && cached?.product) return cached;
 
   const trends = await getGoogleTrends();
@@ -132,16 +146,18 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
       const products = await searchCoupang(env, keyword);
       if (!products.length) continue;
 
-      // 같은 검색어를 유지하면서 1위 → 2위 → 3위 순으로 내려갑니다.
       const currentRank = refresh && cached?.keyword === keyword ? Number(cached.product?.rank) : undefined;
       const product = pickByRank(products, currentRank);
       if (!product) continue;
+
+      // 실제 클릭에 사용하는 URL을 쿠팡 파트너스 단축링크로 변환합니다.
+      const partnerUrl = await createPartnerShortUrl(env, product.productUrl);
 
       const result = {
         date: today,
         keyword,
         source: trends.includes(keyword) ? "Google Trends" : "fallback",
-        product,
+        product: { ...product, partnerUrl },
         generatedAt: new Date().toISOString(),
       };
 
@@ -150,7 +166,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
       }
       return result;
     } catch {
-      // 한 검색어의 API 오류가 전체 추천을 막지 않도록 다음 검색어로 넘어갑니다.
+      // 한 검색어/상품의 API 오류가 전체 추천을 막지 않도록 다음 검색어로 넘어갑니다.
     }
   }
 
