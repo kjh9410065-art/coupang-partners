@@ -4,8 +4,8 @@
  * 흐름:
  * 1. Google Trends 한국 급상승 검색어를 가져옵니다.
  * 2. 상품으로 연결할 수 있는 검색어를 쿠팡에서 검색합니다.
- * 3. 여러 상품 중 하나를 골라 보여줍니다.
- * 4. 일반 조회는 오늘의 상품을 유지하고, "다시 보기"는 다른 상품으로 교체합니다.
+ * 3. 쿠팡 검색 순위 1위부터 순서대로 후보를 사용합니다.
+ * 4. 일반 조회는 1위, 다시 보기는 2위 → 3위 → 4위 순서로 보여줍니다.
  */
 
 export interface RecommendEnv {
@@ -64,7 +64,8 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
       isRocket: Boolean(product.isRocket),
     }))
     .filter((product: any) => product.productId && product.productName && product.productUrl)
-    .filter((product: any) => product.productName.length >= 4 && product.productName.length <= 180);
+    .filter((product: any) => product.productName.length >= 4 && product.productName.length <= 180)
+    .sort((a: any, b: any) => a.rank - b.rank);
 }
 
 async function getGoogleTrends(): Promise<string[]> {
@@ -95,14 +96,20 @@ function decodeXml(value: string) {
     .replace(/&gt;/g, ">");
 }
 
-function pickProduct(products: any[], excludeProductId?: string) {
-  // 현재 상품을 제외하고 여러 후보 중 무작위로 골라 "다시 보기" 때 다른 상품을 보여줍니다.
-  const candidates = excludeProductId
-    ? products.filter((product) => product.productId !== excludeProductId)
-    : products;
+/**
+ * 처음에는 1위를 보여주고,
+ * 다시 보기에서는 현재 순위보다 한 단계 낮은 상품을 우선 보여줍니다.
+ * 예: 1위 → 2위 → 3위 → 4위
+ */
+function pickByRank(products: any[], currentRank?: number) {
+  if (!products.length) return null;
 
-  if (!candidates.length) return null;
-  return candidates[Math.floor(Math.random() * candidates.length)];
+  if (currentRank) {
+    const next = products.find((product) => product.rank > currentRank);
+    if (next) return next;
+  }
+
+  return products[0];
 }
 
 export async function getTodayRecommendation(env: RecommendEnv, refresh = false) {
@@ -111,10 +118,9 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
     ? await env.CONTENT_STORE.get(DAILY_KEY, "json") as any
     : null;
 
-  // 일반 조회는 오늘 선정된 상품을 그대로 보여줍니다.
+  // 처음 접속하면 오늘의 1위 상품을 그대로 보여줍니다.
   if (!refresh && cached?.date === today && cached?.product) return cached;
 
-  // 다시 보기라면 기존 검색어를 우선 사용해 같은 관심 주제 안에서 다른 상품을 고릅니다.
   const trends = await getGoogleTrends();
   const keywords = cached?.keyword
     ? [cached.keyword, ...trends.filter((keyword) => keyword !== cached.keyword), "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"]
@@ -125,8 +131,9 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
       const products = await searchCoupang(env, keyword);
       if (!products.length) continue;
 
-      // 같은 검색어에서 현재 상품과 다른 상품을 우선 선택합니다.
-      const product = pickProduct(products, refresh && cached?.keyword === keyword ? String(cached.product?.productId ?? "") : undefined);
+      // 같은 검색어를 유지하면서 1위 → 2위 → 3위 순으로 내려갑니다.
+      const currentRank = refresh && cached?.keyword === keyword ? Number(cached.product?.rank) : undefined;
+      const product = pickByRank(products, currentRank);
       if (!product) continue;
 
       const result = {
