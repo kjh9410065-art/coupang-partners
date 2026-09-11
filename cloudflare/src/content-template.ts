@@ -5,9 +5,9 @@ const DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로,
  *
  * 원칙
  * - 긴 상품명은 제목에서만 읽기 쉽게 축약합니다.
- * - 본문에는 전체 상품명을 반복하지 않습니다.
+ * - 본문에는 상품명을 반복하지 않습니다.
  * - 상품명과 조사 결과에서 확인되는 내용만 사용합니다.
- * - '추천하는 이유/장점/단점/상품 확인' 같은 기계적인 소제목을 만들지 않습니다.
+ * - 기계적인 장점/단점/추천 사용처/상품 확인 소제목을 만들지 않습니다.
  * - 독자에게 다른 페이지를 확인하거나 비교하라고 떠넘기지 않습니다.
  * - 상품명에 없는 성능, 수치, 재질, 인증, 사용후기는 만들어내지 않습니다.
  */
@@ -18,7 +18,8 @@ export function buildProductPost(keyword: string, productName: string, researchE
   const features = extractFeatures(fullName, researchText);
 
   const titles = makeTitles(shortName, keyword);
-  const body = makeBody(keyword, shortName, features);
+  // 상품명은 제목에서만 사용하고, 본문에는 제품명을 넣지 않습니다.
+  const body = makeBody(keyword, features);
 
   return {
     titles,
@@ -34,8 +35,8 @@ function cleanText(value: string): string {
 }
 
 /**
- * 제목에 너무 긴 쿠팡 상품명이 그대로 들어가지 않도록 핵심 단어만 남깁니다.
- * 원본 상품명은 특징 추출에 사용하고 제목 표시용으로만 축약합니다.
+ * 긴 상품명이 제목에 그대로 노출되지 않도록 핵심 단어만 남깁니다.
+ * 원본 상품명은 특징 판별에 그대로 사용합니다.
  */
 function shortenProductName(name: string, maxLength = 32): string {
   if (name.length <= maxLength) return name;
@@ -46,7 +47,6 @@ function shortenProductName(name: string, maxLength = 32): string {
     .replace(/\s+/g, " ")
     .trim();
 
-  // 제품 종류를 우선적으로 남깁니다.
   const productTypes = [
     "폴딩박스", "정리함", "수납함", "테이블", "의자", "책상", "거치대",
     "청소기", "가습기", "공기청정기", "선풍기", "조명", "램프", "이어폰",
@@ -59,7 +59,7 @@ function shortenProductName(name: string, maxLength = 32): string {
   const words = normalized.split(/\s+/).filter(Boolean);
   const selected: string[] = [];
 
-  // 브랜드/모델처럼 앞부분에 있는 식별 단어를 하나 보존합니다.
+  // 브랜드/모델처럼 앞부분에 있는 식별 단어를 하나만 보존합니다.
   for (const word of words) {
     if (isNoiseWord(word) || productTypes.includes(word)) continue;
     if (word.length >= 2) {
@@ -68,11 +68,11 @@ function shortenProductName(name: string, maxLength = 32): string {
     }
   }
 
+  // 제품 종류는 원래 상품명에 실제로 포함된 것만 추가합니다.
   for (const type of productTypes) {
     if (normalized.includes(type) && !selected.includes(type)) selected.push(type);
   }
 
-  // 핵심 제품 종류를 찾지 못한 경우 원래 이름을 단어 단위로 줄입니다.
   if (selected.length === 0) {
     let result = "";
     for (const word of words) {
@@ -100,7 +100,6 @@ function isNoiseWord(word: string): boolean {
 function extractFeatures(name: string, researchText: string): string[] {
   const source = `${name} ${researchText}`;
   const features: string[] = [];
-
   const add = (condition: boolean, text: string) => {
     if (condition && !features.includes(text)) features.push(text);
   };
@@ -154,7 +153,7 @@ function extractFeatures(name: string, researchText: string): string[] {
   return features.slice(0, 10);
 }
 
-/** 제목 후보 5개를 만듭니다. 상품명은 축약된 이름만 사용합니다. */
+/** 제목 후보 5개를 만듭니다. */
 function makeTitles(shortName: string, keyword: string): string[] {
   const topic = cleanText(keyword) || "상품";
   return [
@@ -167,34 +166,33 @@ function makeTitles(shortName: string, keyword: string): string[] {
 }
 
 /**
- * 실제 특징을 하나의 자연스러운 글로 연결합니다.
- * 기계적인 장단점/추천사용처 섹션을 만들지 않습니다.
+ * 상품명 없이 특징을 자연스럽게 이어 붙여 블로그 본문을 만듭니다.
+ * 반복적인 소제목과 외부 페이지 확인 유도 문구를 사용하지 않습니다.
  */
-function makeBody(keyword: string, shortName: string, features: string[]): string {
+function makeBody(keyword: string, features: string[]): string {
   const paragraphs: string[] = [];
+  const topic = cleanText(keyword) || "상품";
 
-  // 제목 아래에는 고지문과 별개로 자연스러운 도입만 둡니다.
   paragraphs.push(
-    `${cleanText(keyword) || "상품"} 관련 제품을 찾을 때는 이름에 적힌 구성과 용도를 함께 보는 것이 중요합니다. ` +
-    `${shortName}은 ${features.length ? "상품명에서 확인되는 구성과 용도가 비교적 분명한 제품입니다." : "확인된 상품 정보만 기준으로 간단하게 소개할 수 있는 제품입니다."}`
+    `${topic} 관련 제품을 찾을 때는 이름에 적힌 구성과 용도를 함께 살펴보는 것이 중요합니다. ` +
+    `${features.length ? "이번 상품은 표시된 구성과 활용 방향이 비교적 분명합니다." : "제공된 정보에서 확인되는 내용만 기준으로 간단하게 소개할 수 있습니다."}`
   );
 
   if (features.length) {
     paragraphs.push(buildFeatureParagraph(features));
   } else {
-    paragraphs.push("현재 제공된 상품 정보에서 확인되는 내용만 기준으로 보면 기본적인 상품 용도와 구성 중심으로 살펴볼 수 있습니다.");
+    paragraphs.push("현재 제공된 상품 정보에서 확인되는 내용은 기본적인 용도와 구성 중심으로 정리할 수 있습니다.");
   }
 
-  // 방수팩은 상품 자체가 방수라는 뜻이 아니므로 별도로 정확하게 표현합니다.
+  // 방수팩은 상품 자체의 방수 성능으로 오해하지 않도록 별도로 설명합니다.
   if (features.includes("전용 방수팩 포함 구성")) {
-    paragraphs.push("전용 방수팩이 함께 구성되어 있다는 점도 눈에 띕니다. 방수팩이 포함된 구성이라는 의미이며, 제품 자체의 방수 성능을 뜻하는 표현은 아닙니다.");
+    paragraphs.push("전용 방수팩이 함께 구성되어 있다는 점도 특징입니다. 이는 방수팩이 포함된 구성이라는 의미이며, 제품 자체의 방수 성능을 뜻하는 표현은 아닙니다.");
   }
 
-  // 독자에게 다른 페이지를 확인하라고 하지 않고 글 안에서 의미를 설명하며 마무리합니다.
   paragraphs.push(
     features.length
-      ? "수납, 이동, 촬영, 생활용품처럼 제품에 표시된 용도가 필요한 상황에서 구성에 맞춰 활용할 수 있는 제품입니다."
-      : "제공된 정보에 없는 세부 사양이나 사용 경험은 임의로 덧붙이지 않고 확인된 내용만 담았습니다."
+      ? "표시된 구성과 용도를 기준으로 보면 수납, 이동, 촬영, 생활용품 등 필요한 목적에 맞춰 활용할 수 있는 제품입니다."
+      : "제공된 정보에 없는 세부 사양이나 실제 사용 경험은 임의로 덧붙이지 않고 확인된 내용만 담았습니다."
   );
 
   return paragraphs.join("\n\n");
@@ -204,15 +202,12 @@ function makeBody(keyword: string, shortName: string, features: string[]): strin
 function buildFeatureParagraph(features: string[]): string {
   const first = features.slice(0, 4);
   const second = features.slice(4, 8);
-
   const sentences: string[] = [];
 
-  if (first.length) {
-    sentences.push(`주요 특징은 ${joinKorean(first)}입니다.`);
-  }
+  if (first.length) sentences.push(`주요 특징은 ${joinKorean(first)}입니다.`);
 
   if (features.some((feature) => feature.includes("폴딩박스"))) {
-    sentences.push("접어서 보관할 수 있는 형태라 사용하지 않을 때 보관 공간을 줄이는 방향으로 활용할 수 있고, 물건을 담아 이동하는 용도로도 사용할 수 있습니다.");
+    sentences.push("접어서 보관할 수 있는 형태라 사용하지 않을 때 보관하기 좋고, 물건을 담아 이동하는 용도로도 사용할 수 있습니다.");
   }
 
   if (features.includes("손잡이가 있는 형태")) {
@@ -231,9 +226,7 @@ function buildFeatureParagraph(features: string[]): string {
     sentences.push("캠핑 장비를 담아 이동하고 현장에서 사용하는 수납 용도와도 잘 맞습니다.");
   }
 
-  if (second.length) {
-    sentences.push(`그 밖에도 ${joinKorean(second)} 같은 요소가 포함되어 있습니다.`);
-  }
+  if (second.length) sentences.push(`그 밖에도 ${joinKorean(second)} 같은 요소가 포함되어 있습니다.`);
 
   return sentences.join(" ");
 }
