@@ -17,7 +17,7 @@ export interface RecommendEnv {
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
 const COUPANG_DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink";
-const DAILY_KEY = "recommend:today:v4";
+const DAILY_KEY = "recommend:today:v5";
 
 const BLOCKED_WORDS = [
   "대통령", "국회", "선거", "정치", "사망", "사건", "사고", "축구", "야구", "농구",
@@ -41,7 +41,7 @@ async function createAuthorization(env: RecommendEnv, method: string, path: stri
 }
 
 async function searchCoupang(env: RecommendEnv, keyword: string) {
-  // limit을 명시해 1~10위 상품을 확실하게 받아옵니다.
+  // 1~10위까지 받아서 '다른 상품 보기'에서 순위대로 넘길 수 있게 합니다.
   const query = `keyword=${encodeURIComponent(keyword)}&limit=10`;
   const response = await fetch(`${COUPANG_HOST}${COUPANG_SEARCH_PATH}?${query}`, {
     headers: {
@@ -58,7 +58,6 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
     throw new Error(`쿠팡 검색 응답 오류 (${response.status})`);
   }
 
-  // 쿠팡이 반환한 실제 오류 코드/메시지를 숨기지 않고 화면까지 전달합니다.
   if (!response.ok || data?.rCode !== "0") {
     throw new Error(`쿠팡 검색 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
   }
@@ -80,9 +79,18 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
     .sort((a: any, b: any) => a.rank - b.rank);
 }
 
-/** 쿠팡 일반 상품 URL을 파트너스 추적 단축 URL로 변환합니다. */
-async function createPartnerShortUrl(env: RecommendEnv, productUrl: string) {
-  const body = JSON.stringify({ coupangUrls: [productUrl] });
+/**
+ * 검색 API가 반환한 URL 전체를 그대로 넘기지 않고,
+ * 상품 ID만 사용한 정식 상품 URL로 정규화합니다.
+ * 딥링크 API의 url.convert failed(400)를 피하기 위한 처리입니다.
+ */
+async function createPartnerShortUrl(env: RecommendEnv, productId: string, originalUrl: string) {
+  // 쿠팡 딥링크 예제에서 사용하는 가장 단순한 상품 페이지 형태로 먼저 변환합니다.
+  const canonicalUrl = /^\d+$/.test(productId)
+    ? `https://www.coupang.com/vp/products/${productId}`
+    : originalUrl;
+
+  const body = JSON.stringify({ coupangUrls: [canonicalUrl] });
   const response = await fetch(`${COUPANG_HOST}${COUPANG_DEEPLINK_PATH}`, {
     method: "POST",
     headers: {
@@ -100,7 +108,6 @@ async function createPartnerShortUrl(env: RecommendEnv, productUrl: string) {
     throw new Error(`파트너스 딥링크 응답 오류 (${response.status})`);
   }
 
-  // 딥링크 API가 거부하면 실제 원인을 그대로 보여줍니다.
   if (!response.ok || data?.rCode !== "0") {
     throw new Error(`파트너스 딥링크 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
   }
@@ -172,8 +179,8 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
       const product = pickByRank(products, currentRank);
       if (!product) continue;
 
-      // 실제 클릭에 사용하는 URL을 쿠팡 파트너스 단축링크로 변환합니다.
-      const partnerUrl = await createPartnerShortUrl(env, product.productUrl);
+      // 상품 ID로 정규화한 URL을 쿠팡 파트너스 단축링크로 변환합니다.
+      const partnerUrl = await createPartnerShortUrl(env, product.productId, product.productUrl);
 
       const result = {
         date: today,
@@ -188,7 +195,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
       }
       return result;
     } catch (error) {
-      // 마지막 실패 원인을 저장해 화면에서 정확히 확인할 수 있게 합니다.
+      // 한 검색어/상품에서 실패하면 다음 후보로 넘어갑니다.
       lastError = error instanceof Error ? error.message : String(error);
     }
   }
