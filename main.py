@@ -354,7 +354,7 @@ class CoupangPartnersApp:
 
         self.title_button.config(state="disabled")
         self.body_button.config(state="disabled")
-        self.status_label.config(text="AI가 제목 5개를 만들고 있습니다...")
+        self.status_label.config(text="무료 생성기로 제목 5개를 만들고 있습니다...")
         self.root.update_idletasks()
 
         try:
@@ -362,7 +362,7 @@ class CoupangPartnersApp:
             titles = self._parse_titles(raw)
 
             if not titles:
-                raise Exception("AI가 사용할 수 있는 제목을 만들지 못했습니다.")
+                raise Exception("제목을 만들지 못했습니다.")
 
             self.title_candidates = titles[:5]
             self.title_list.delete(0, tk.END)
@@ -385,7 +385,7 @@ class CoupangPartnersApp:
 
     @staticmethod
     def _parse_titles(text):
-        """Gemini 응답에서 제목 후보만 추출합니다."""
+        """무료 로컬 생성기 응답에서 제목 후보만 추출합니다."""
         titles = []
 
         for line in text.splitlines():
@@ -498,7 +498,7 @@ class CoupangPartnersApp:
 
         self.body_button.config(state="disabled")
         self.title_button.config(state="disabled")
-        self.status_label.config(text="Gemini가 블로그 본문을 작성하고 있습니다...")
+        self.status_label.config(text="무료 생성기로 블로그 본문을 작성하고 있습니다...")
         self.blog_text.delete("1.0", tk.END)
         self.root.update_idletasks()
 
@@ -568,112 +568,68 @@ class CoupangPartnersApp:
                 continue
             image_html.append(
                 f'<img src="{html.escape(path.as_uri(), quote=True)}" '
-                'style="max-width:100%;height:auto;margin:16px 0;display:block;">'
+                'style="max-width:100%;height:auto;margin:10px 0;">'
             )
 
-        html_content = f"""<!doctype html>
+        html_content = f"""
+<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
 <style>
-body {{
-    margin: 0;
-    padding: 32px 20px 60px;
-    background: #f5f5f5;
-    font-family: 'Malgun Gothic', sans-serif;
-    color: #222;
-    line-height: 1.8;
-}}
-.article {{
-    max-width: 760px;
-    margin: 0 auto;
-    background: white;
-    padding: 36px;
-    box-sizing: border-box;
-}}
-h1 {{
-    margin-top: 0;
-    line-height: 1.4;
-    font-size: 28px;
-}}
-p {{
-    margin: 0 0 20px;
-}}
-.notice {{
-    color: #666;
-    font-size: 13px;
-    margin-bottom: 28px;
-}}
-.images {{
-    margin: 20px 0;
-}}
-.partner {{
-    margin-top: 32px;
-    padding-top: 20px;
-    border-top: 1px solid #eee;
-}}
-.partner a {{
-    word-break: break-all;
-}}
+body {{ font-family: 'Malgun Gothic', sans-serif; max-width: 760px; margin: 40px auto; line-height: 1.8; padding: 0 20px; }}
+h1 {{ line-height: 1.4; }}
+p {{ white-space: normal; }}
+.disclosure {{ color: #666; font-size: 14px; }}
 </style>
 </head>
 <body>
-<div class="article">
-    <div class="notice">{html.escape(PARTNERS_DISCLOSURE)}</div>
-    <h1>{html.escape(title)}</h1>
-    <div class="images">{''.join(image_html)}</div>
-    <div class="body">{''.join(paragraphs)}</div>
-    <div class="partner">
-        <a href="{escaped_url}" target="_blank" rel="noopener">{escaped_url}</a>
-    </div>
-</div>
+<h1>{html.escape(title)}</h1>
+<div class="disclosure">{html.escape(PARTNERS_DISCLOSURE)}</div>
+{''.join(image_html)}
+{''.join(paragraphs)}
 </body>
-</html>"""
+</html>
+"""
 
-        preview_path = Path(__file__).resolve().parent / "images" / "blog_preview.html"
-        preview_path.parent.mkdir(exist_ok=True)
+        preview_path = Path("blog_preview.html").resolve()
         preview_path.write_text(html_content, encoding="utf-8")
-
-        # 기본 브라우저에서 미리보기를 엽니다.
         webbrowser.open(preview_path.as_uri())
         self.status_label.config(text="블로그 미리보기를 열었습니다.")
 
     def copy_blog(self):
-        """생성된 블로그 본문 전체를 클립보드에 복사합니다."""
+        """현재 본문 전체를 클립보드에 복사합니다."""
         text = self.blog_text.get("1.0", "end-1c").strip()
         if not text:
-            messagebox.showinfo("복사", "복사할 글이 없습니다.")
+            messagebox.showwarning("복사", "복사할 본문이 없습니다.")
             return
 
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.root.update()
-        self.status_label.config(text="블로그 본문 전체를 클립보드에 복사했습니다.")
+        self.status_label.config(text="본문 전체를 클립보드에 복사했습니다.")
 
     def clear_all(self):
-        """현재 작업 내용을 모두 초기화합니다."""
-        self.products = []
-        self.selected_product = None
-        self.product_photo = None
-        self.title_candidates = []
-
+        """검색 결과와 생성 내용을 모두 초기화합니다."""
         self.keyword_entry.delete(0, tk.END)
         self.result_list.delete(0, tk.END)
         self.title_list.delete(0, tk.END)
         self.blog_text.delete("1.0", tk.END)
-
-        self.image_label.config(image="", text="상품 이미지")
+        self.products = []
+        self.selected_product = None
+        self.product_photo = None
+        self.title_candidates = []
         self.product_info.config(text="상품을 선택해주세요.")
         self.selected_title_label.config(text="제목을 선택하면 본문을 만들 수 있습니다.")
+        self.image_label.config(image="", text="상품 이미지")
         self.title_button.config(state="disabled")
         self.body_button.config(state="disabled")
         self.status_label.config(text="초기화 완료")
 
 
 if __name__ == "__main__":
-    # Tkinter 프로그램을 시작합니다.
+    # Tkinter 애플리케이션을 시작합니다.
     root = tk.Tk()
     app = CoupangPartnersApp(root)
     root.mainloop()
