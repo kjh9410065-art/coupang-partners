@@ -57,6 +57,7 @@ function renderPage(): Response {
             <div id="name" class="name"></div>
             <div id="price" class="price"></div>
             <div id="meta" class="meta"></div>
+            <!-- 일반 쿠팡 URL이 아니라 파트너스 추적 단축 URL을 사용합니다. -->
             <a id="link" class="link" target="_blank" rel="noopener noreferrer">쿠팡에서 상품 보기</a>
           </div>
         </article>
@@ -84,7 +85,8 @@ function renderPage(): Response {
         document.getElementById('name').textContent=product.productName;
         document.getElementById('price').textContent=product.productPrice ? product.productPrice.toLocaleString('ko-KR')+'원' : '가격 확인';
         document.getElementById('meta').textContent='오늘의 검색 관심 신호를 기준으로 선정 · 쿠팡 검색 결과 상품';
-        document.getElementById('link').href=product.productUrl;
+        // 파트너스 단축링크로 연결하여 클릭이 파트너스 추적되도록 합니다.
+        document.getElementById('link').href=product.partnerUrl || product.productUrl;
         document.getElementById('result').style.display='block';
         status.textContent=refresh ? '다른 상품으로 변경했습니다.' : '오늘의 추천 상품입니다.';
         button.textContent='다른 상품 보기';
