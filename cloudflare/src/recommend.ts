@@ -3,7 +3,7 @@
  *
  * 흐름:
  * 1. Google Trends 한국 급상승 검색어를 가져옵니다.
- * 2. 상품으로 연결할 수 있는 검색어를 쿠팡에서 검색합니다.
+ * 2. 쿠팡 파트너스 상품 검색 API로 상품을 가져옵니다.
  * 3. 쿠팡 검색 순위 1위부터 순서대로 후보를 사용합니다.
  * 4. 상품 URL을 쿠팡 파트너스 딥링크(단축 URL)로 변환합니다.
  */
@@ -17,7 +17,7 @@ export interface RecommendEnv {
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
 const COUPANG_DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink";
-const DAILY_KEY = "recommend:today:v3";
+const DAILY_KEY = "recommend:today:v4";
 
 const BLOCKED_WORDS = [
   "대통령", "국회", "선거", "정치", "사망", "사건", "사고", "축구", "야구", "농구",
@@ -25,6 +25,7 @@ const BLOCKED_WORDS = [
 ];
 
 async function createAuthorization(env: RecommendEnv, method: string, path: string, query = "") {
+  // 쿠팡 파트너스 HMAC 서명용 UTC 시간을 생성합니다.
   const signedDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").slice(2);
   const message = signedDate + method.toUpperCase() + path + query;
   const key = await crypto.subtle.importKey(
@@ -40,7 +41,8 @@ async function createAuthorization(env: RecommendEnv, method: string, path: stri
 }
 
 async function searchCoupang(env: RecommendEnv, keyword: string) {
-  const query = `keyword=${encodeURIComponent(keyword)}`;
+  // limit을 명시해 1~10위 상품을 확실하게 받아옵니다.
+  const query = `keyword=${encodeURIComponent(keyword)}&limit=10`;
   const response = await fetch(`${COUPANG_HOST}${COUPANG_SEARCH_PATH}?${query}`, {
     headers: {
       Authorization: await createAuthorization(env, "GET", COUPANG_SEARCH_PATH, query),
@@ -49,9 +51,18 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
   });
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`쿠팡 검색 오류 (${response.status})`);
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`쿠팡 검색 응답 오류 (${response.status})`);
+  }
 
-  const data = JSON.parse(text);
+  // 쿠팡이 반환한 실제 오류 코드/메시지를 숨기지 않고 화면까지 전달합니다.
+  if (!response.ok || data?.rCode !== "0") {
+    throw new Error(`쿠팡 검색 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
+  }
+
   const products = Array.isArray(data?.data?.productData) ? data.data.productData : [];
 
   return products
@@ -82,11 +93,20 @@ async function createPartnerShortUrl(env: RecommendEnv, productUrl: string) {
   });
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`파트너스 딥링크 오류 (${response.status})`);
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`파트너스 딥링크 응답 오류 (${response.status})`);
+  }
 
-  const data = JSON.parse(text);
+  // 딥링크 API가 거부하면 실제 원인을 그대로 보여줍니다.
+  if (!response.ok || data?.rCode !== "0") {
+    throw new Error(`파트너스 딥링크 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
+  }
+
   const link = data?.data?.[0];
-  if (!link?.shortenUrl) throw new Error("파트너스 단축링크 생성 실패");
+  if (!link?.shortenUrl) throw new Error("파트너스 단축링크가 응답되지 않았습니다.");
   return String(link.shortenUrl);
 }
 
@@ -141,6 +161,8 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
     ? [cached.keyword, ...trends.filter((keyword) => keyword !== cached.keyword), "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"]
     : [...trends, "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"];
 
+  let lastError = "오늘 추천할 쿠팡 상품을 찾지 못했습니다.";
+
   for (const keyword of keywords) {
     try {
       const products = await searchCoupang(env, keyword);
@@ -165,10 +187,11 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
         await env.CONTENT_STORE.put(DAILY_KEY, JSON.stringify(result), { expirationTtl: 60 * 60 * 30 });
       }
       return result;
-    } catch {
-      // 한 검색어/상품의 API 오류가 전체 추천을 막지 않도록 다음 검색어로 넘어갑니다.
+    } catch (error) {
+      // 마지막 실패 원인을 저장해 화면에서 정확히 확인할 수 있게 합니다.
+      lastError = error instanceof Error ? error.message : String(error);
     }
   }
 
-  throw new Error("오늘 추천할 쿠팡 상품을 찾지 못했습니다.");
+  throw new Error(lastError);
 }
