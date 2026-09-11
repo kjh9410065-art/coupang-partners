@@ -14,6 +14,24 @@ FORBIDDEN_PHRASES = (
 )
 
 
+# 긴 상품명을 제목에서 그대로 반복하지 않고 읽기 쉬운 핵심 이름으로 줄일 때 사용합니다.
+# 제품의 종류를 나타내는 단어는 우선적으로 남기고, 옵션·홍보성 수식어는 뒤에서 정리합니다.
+PRODUCT_KEYWORDS = (
+    "노트북", "태블릿", "모니터", "키보드", "마우스", "이어폰", "헤드폰",
+    "스피커", "충전기", "케이블", "거치대", "파우치", "가방", "백팩",
+    "지갑", "시계", "의자", "테이블", "책상", "수납함", "정리함", "폴딩박스",
+    "캠핑", "텐트", "의류", "자켓", "티셔츠", "바지", "신발", "운동화",
+    "화장품", "크림", "세럼", "샴푸", "비누", "세제", "식품", "커피",
+    "차", "조리도구", "냄비", "프라이팬", "식기", "청소기", "선풍기",
+    "가습기", "공기청정기", "조명", "램프", "수건", "침구", "매트", "방석",
+)
+
+REMOVE_FROM_SHORT_NAME = (
+    "손잡이형", "전용", "구성", "세트", "특가", "추천", "인기", "신상",
+    "무료배송", "당일발송", "국내배송", "대용량", "초특가",
+)
+
+
 def _extract(prompt, label):
     """프롬프트에서 일반 항목이나 [섹션]의 값을 가져옵니다."""
     if label.startswith("["):
@@ -27,6 +45,53 @@ def _extract(prompt, label):
 def _clean_name(name):
     """상품명의 불필요한 공백을 정리합니다."""
     return re.sub(r"\s+", " ", name).strip()
+
+
+def _short_name(name, max_length=34):
+    """긴 상품명을 제목에서 자연스럽게 읽을 수 있는 핵심 이름으로 축약합니다.
+
+    원래 상품명 전체는 특징 판별에 그대로 사용합니다.
+    제목에 표시할 때만 축약하므로 실제 상품 정보가 손실되지 않습니다.
+    """
+    name = _clean_name(name)
+    if len(name) <= max_length:
+        return name
+
+    # 괄호 안의 긴 옵션 설명과 '+' 연결을 분리해 핵심 단어를 읽기 쉽게 만듭니다.
+    normalized = re.sub(r"[()\[\]{}]", " ", name)
+    normalized = normalized.replace("+", " ").replace(",", " ").replace("/", " ")
+    words = [w for w in re.split(r"\s+", normalized) if w]
+
+    # 제품 종류를 나타내는 단어를 먼저 모읍니다. 중복은 제거합니다.
+    selected = []
+    for word in words:
+        if word in REMOVE_FROM_SHORT_NAME:
+            continue
+        if word in PRODUCT_KEYWORDS and word not in selected:
+            selected.append(word)
+
+    # 제품 종류가 하나도 없으면 원래 이름의 앞부분을 단어 단위로 줄입니다.
+    if not selected:
+        result = ""
+        for word in words:
+            candidate = f"{result} {word}".strip()
+            if len(candidate) > max_length:
+                break
+            result = candidate
+        return result or name[:max_length].rstrip()
+
+    # 브랜드/모델처럼 제품명을 식별하는 앞부분도 하나 정도 보존합니다.
+    for word in words:
+        if word in PRODUCT_KEYWORDS or word in REMOVE_FROM_SHORT_NAME:
+            continue
+        if len(word) >= 2 and word not in selected:
+            candidate = " ".join([word] + selected)
+            if len(candidate) <= max_length:
+                selected.insert(0, word)
+                break
+
+    result = " ".join(selected)
+    return result[:max_length].rstrip() if result else name[:max_length].rstrip()
 
 
 def _is_true(value):
@@ -82,15 +147,18 @@ def _feature_sentences(name):
 
 
 def _make_titles(prompt):
-    """실제 상품명만 사용해 과장 없는 제목 5개를 만듭니다."""
-    name = _clean_name(_extract(prompt, "실제 상품명"))
-    if not name:
+    """긴 상품명은 자연스럽게 축약해 과장 없는 제목 5개를 만듭니다."""
+    full_name = _clean_name(_extract(prompt, "실제 상품명"))
+    if not full_name:
         raise Exception("상품명을 확인할 수 없습니다.")
+
+    # 긴 이름을 그대로 제목에 붙이지 않고 읽기 쉬운 핵심 이름을 사용합니다.
+    name = _short_name(full_name)
 
     titles = [
         f"{name} 상품 정보와 주요 특징",
         f"{name} 구성과 활용 방법 정리",
-        f"{name} 캠핑·수납 활용 정보",
+        f"{name} 활용 정보 간단 정리",
         f"{name} 구매 전 알아둘 구성과 특징",
         f"{name} 핵심 정보 간단 정리",
     ]
@@ -109,7 +177,7 @@ def _make_body(prompt):
         raise Exception("상품명을 확인할 수 없습니다.")
 
     # 최종 글에서는 제품명을 제목에만 넣고 본문에서는 다시 쓰지 않습니다.
-    paragraphs = [title or name]
+    paragraphs = [title or _short_name(name)]
 
     # AI식 도입을 없애고 바로 확인 가능한 특징을 설명합니다.
     features = _feature_sentences(name)
