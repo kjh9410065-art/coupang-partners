@@ -16,7 +16,8 @@ export interface RecommendEnv {
 
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
-const DAILY_KEY = "recommend:today";
+// 기존 캐시와 분리해서 새 순위 방식이 바로 적용되도록 버전을 올립니다.
+const DAILY_KEY = "recommend:today:v2";
 
 const BLOCKED_WORDS = [
   "대통령", "국회", "선거", "정치", "사망", "사건", "사고", "축구", "야구", "농구",
