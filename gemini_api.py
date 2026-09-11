@@ -1,117 +1,112 @@
-import os
-import time
+import re
 
-import requests
-from dotenv import load_dotenv
+# 외부 AI API를 사용하지 않고 PC에서 바로 글을 만드는 무료 생성기입니다.
+# 따라서 API 키, 월 사용료, 토큰 한도가 필요하지 않습니다.
 
-# .env에서 Gemini API 키를 읽습니다.
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# 한 모델에 문제가 생기면 다음 모델로 자동 전환합니다.
-MODELS = [
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-]
-
-# 모든 생성 요청에 공통으로 적용하는 문체 규칙입니다.
-# 상품명을 억지로 반복하며 설명하는 AI식 문장을 원천적으로 금지합니다.
-FINAL_WRITING_RULES = """
-[추가 필수 문체 규칙]
-- 절대로 다음과 같은 AI식 문장 구조를 사용하지 않는다: '상품명을 보시면', '상품명을 보면', '상품명에서 알 수 있듯이', '상품명을 통해 알 수 있듯이', '장점을 보시면', '특징을 보시면', '이름에서 알 수 있듯이'.
-- 상품명을 독자에게 보여주거나 설명하는 방식으로 문장을 시작하지 않는다.
-- '이 제품은 ~제품입니다', '상품명 그대로 ~', '상품명을 보면 ~'처럼 상품명 자체를 근거로 장점이나 성능을 추론하지 않는다.
-- 제공된 정보에 없는 특징을 상품명만 보고 추측하지 않는다.
-- 같은 상품명을 문단마다 반복하지 않는다. 필요한 경우 자연스럽게 '이 제품', '해당 제품' 등으로 지칭한다.
-- 독자에게 상품명을 보라고 권하는 표현, 상품명을 분석해서 장점을 설명하는 표현을 사용하지 않는다.
-- 문장을 사람이 실제 블로그에 작성한 것처럼 자연스럽게 연결하고, 정형화된 AI 도입 문구를 피한다.
-"""
+FORBIDDEN_PHRASES = (
+    "상품명을 보시면",
+    "상품명을 보면",
+    "상품명에서 알 수 있듯이",
+    "상품명을 통해 알 수 있듯이",
+    "장점을 보시면",
+    "특징을 보시면",
+    "이름에서 알 수 있듯이",
+    "상품명 그대로",
+)
 
 
-def _request(model, prompt):
-    """지정한 Gemini 모델에 한 번 요청하고 결과를 반환합니다."""
-    api_url = (
-        "https://generativelanguage.googleapis.com/"
-        f"v1beta/models/{model}:generateContent"
+def _extract(prompt, label, next_label=None):
+    """프롬프트에서 특정 항목의 값을 안전하게 꺼냅니다."""
+    pattern = rf"{re.escape(label)}:\s*(.*?)(?=\n\[|\n[A-Za-z가-힣].*?:|$)"
+    match = re.search(pattern, prompt, re.DOTALL)
+    if not match:
+        return ""
+    value = match.group(1).strip()
+    if next_label and next_label in value:
+        value = value.split(next_label, 1)[0].strip()
+    return value
+
+
+def _clean_name(name):
+    """쿠팡 상품명에 붙은 불필요한 공백을 정리합니다."""
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def _make_titles(prompt):
+    """실제 상품명만 활용해 과장 없는 제목 5개를 만듭니다."""
+    name = _clean_name(_extract(prompt, "실제 상품명"))
+    if not name:
+        raise Exception("상품명을 확인할 수 없습니다.")
+
+    # 상품의 존재하지 않는 기능을 추측하지 않고 제목의 관점만 바꿉니다.
+    titles = [
+        f"{name} 상품 정보와 특징 정리",
+        f"{name} 어떤 제품인지 간단하게 살펴보기",
+        f"{name} 주요 정보 한눈에 보기",
+        f"{name} 구매 전 확인할 상품 정보",
+        f"{name} 상품 특징과 배송 정보 정리",
+    ]
+    return "\n".join(f"{i}. {title}" for i, title in enumerate(titles, 1))
+
+
+def _make_body(prompt):
+    """프롬프트에 들어온 확인 가능한 정보만으로 짧고 자연스러운 글을 만듭니다."""
+    title = _extract(prompt, "[선택한 제목]")
+    # 제목 뒤의 다음 섹션이 시작되기 전까지만 사용합니다.
+    title = title.split("[실제 상품 정보]", 1)[0].strip()
+
+    name = _clean_name(_extract(prompt, "상품명"))
+    rocket = _extract(prompt, "로켓배송 여부")
+    free_shipping = _extract(prompt, "무료배송 여부")
+    partner_url = _extract(prompt, "[마지막 링크]")
+    partner_url = partner_url.split("[", 1)[0].strip()
+
+    if not name:
+        raise Exception("상품명을 확인할 수 없습니다.")
+
+    paragraphs = []
+    paragraphs.append(title or name)
+    paragraphs.append(
+        f"오늘 살펴볼 상품은 {name}입니다. 상품을 고를 때는 필요한 용도와 함께 "
+        "현재 제공되는 상품 정보를 확인해보는 것이 좋습니다."
     )
 
-    # 본문뿐 아니라 제목 생성에서도 공통 문체 규칙을 지키도록 강제합니다.
-    final_prompt = f"{prompt}\n\n{FINAL_WRITING_RULES}"
+    delivery = []
+    if rocket.lower() in ("true", "1", "yes"):
+        delivery.append("로켓배송이 가능한 상품으로 표시되어 있습니다.")
+    elif rocket.lower() in ("false", "0", "no"):
+        delivery.append("현재 상품 정보에서는 로켓배송 상품으로 표시되어 있지 않습니다.")
 
-    request_data = {
-        "contents": [{"parts": [{"text": final_prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": 4096,
-            "temperature": 0.7,
-        },
-    }
+    if free_shipping.lower() in ("true", "1", "yes"):
+        delivery.append("무료배송 상품으로 표시되어 있습니다.")
+    elif free_shipping.lower() in ("false", "0", "no"):
+        delivery.append("현재 상품 정보에서는 무료배송 상품으로 표시되어 있지 않습니다.")
 
-    response = requests.post(
-        api_url,
-        headers={
-            "x-goog-api-key": GEMINI_API_KEY,
-            "Content-Type": "application/json",
-        },
-        json=request_data,
-        timeout=120,
+    if delivery:
+        paragraphs.append(" ".join(delivery))
+
+    paragraphs.append(
+        "상품의 세부 구성이나 기능처럼 별도로 확인이 필요한 내용은 실제 판매 페이지의 "
+        "상품 정보를 기준으로 확인하는 것이 가장 정확합니다. 필요한 상품인지 살펴본 뒤 "
+        "구매 여부를 결정하면 됩니다."
     )
 
-    # 503은 일시적인 서버 문제일 수 있으므로 호출부에서 재시도합니다.
-    if response.status_code == 503:
-        raise RuntimeError("503")
+    if partner_url:
+        paragraphs.append(partner_url)
 
-    response.raise_for_status()
-    result = response.json()
-    candidates = result.get("candidates", [])
-    if not candidates:
-        raise Exception("Gemini 응답에 생성 결과가 없습니다.")
+    text = "\n\n".join(paragraphs)
 
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "\n".join(part.get("text", "") for part in parts).strip()
-    if not text:
-        raise Exception("Gemini가 빈 응답을 반환했습니다.")
+    # 혹시 금지 문구가 들어간 경우 즉시 제거합니다.
+    for phrase in FORBIDDEN_PHRASES:
+        text = text.replace(phrase, "")
 
-    return text
+    return text.strip()
 
 
 def generate_text(prompt):
-    """Gemini로 글을 생성하고 서버 오류가 나면 다른 모델로 전환합니다."""
-    if not GEMINI_API_KEY:
-        raise Exception("GEMINI_API_KEY가 .env에 없습니다.")
+    """기존 Gemini 호출부와 호환되는 무료 로컬 생성 함수입니다."""
+    # main.py는 제목과 본문 모두 이 함수를 호출하므로 프롬프트의 목적을 구분합니다.
+    if "제목 후보를 정확히 5개" in prompt:
+        return _make_titles(prompt)
 
-    last_error = None
-
-    # 각 모델을 최대 3번 시도한 뒤 다음 모델로 넘어갑니다.
-    for model in MODELS:
-        for attempt in range(3):
-            try:
-                print(f"[Gemini 요청] {model} / {attempt + 1}/3")
-                text = _request(model, prompt)
-                print(f"[Gemini 완료] {model}")
-                return text
-
-            except RuntimeError as exc:
-                last_error = exc
-                print(f"[Gemini 503] {model} - 잠시 후 재시도")
-                time.sleep(3)
-
-            except requests.exceptions.Timeout as exc:
-                last_error = exc
-                print(f"[Gemini 시간 초과] {model}")
-                time.sleep(2)
-
-            except requests.exceptions.RequestException as exc:
-                last_error = exc
-                print(f"[Gemini 요청 오류] {model}: {exc}")
-                break
-
-            except Exception as exc:
-                last_error = exc
-                print(f"[Gemini 오류] {model}: {exc}")
-                break
-
-    raise Exception(
-        "Gemini API 요청에 실패했습니다.\n\n"
-        f"마지막 오류: {last_error}"
-    )
+    return _make_body(prompt)
