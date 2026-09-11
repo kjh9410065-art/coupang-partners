@@ -10,7 +10,7 @@ export interface BootstrapEnv {
   CONTENT_STORE: KVNamespace;
 }
 
-import { buildProductPost } from "./content-template";
+import { buildProductPost } from "./content-template-fixed";
 
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
@@ -35,7 +35,7 @@ async function search(env: BootstrapEnv, keyword: string) {
     headers: { Authorization: await auth(env, "GET", COUPANG_SEARCH_PATH, query), "Content-Type": "application/json;charset=UTF-8" },
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`Coupang API 오류 (${response.status}): ${text.slice(0, 400)}`);
+  if (!response.ok) throw new Error(`쿠팡 API 오류 (${response.status}): ${text.slice(0, 400)}`);
   const data = JSON.parse(text);
   return Array.isArray(data?.data?.productData) ? data.data.productData.map((p: any) => ({
     productId: p.productId ?? null,
@@ -47,14 +47,11 @@ async function search(env: BootstrapEnv, keyword: string) {
 
 export async function runBootstrap(env: BootstrapEnv, keyword = "무선청소기") {
   if (await env.CONTENT_STORE.get(BOOTSTRAP_LOCK)) throw new Error("이미 1회 생성 테스트가 완료되었습니다.");
-
   const products = await search(env, keyword);
   if (!products.length) throw new Error("쿠팡 검색 결과가 없습니다.");
-
   const usedProductIds = await env.CONTENT_STORE.get(USED_PRODUCTS_KEY, "json") as string[] | null;
   const product = products.find((p: any) => !usedProductIds?.includes(String(p.productId)));
   if (!product) throw new Error("이번 검색 결과가 모두 과거 홍보 상품입니다.");
-
   const generated = buildProductPost(keyword, product.productName, [product.productName]);
   const blog = {
     disclosure: DISCLOSURE,
@@ -64,24 +61,15 @@ export async function runBootstrap(env: BootstrapEnv, keyword = "무선청소기
     imageUrls: product.productImage ? [product.productImage] : [],
     partnerUrl: product.productUrl,
   };
-
   const now = new Date();
-  const record = {
-    savedAt: now.toISOString(),
-    keyword,
-    recommendation: { product, reason: "검색어와 상품명을 기준으로 선정했습니다." },
-    blog,
-  };
+  const record = { savedAt: now.toISOString(), keyword, recommendation: { product, reason: "검색어와 상품명을 기준으로 선정했습니다." }, blog };
   const storageKey = `post:${now.toISOString()}`;
-
   await env.CONTENT_STORE.put(storageKey, JSON.stringify(record));
   await env.CONTENT_STORE.put("latest", JSON.stringify(record));
   await env.CONTENT_STORE.put(USED_PRODUCTS_KEY, JSON.stringify([...(usedProductIds ?? []), String(product.productId)].slice(-MAX_HISTORY)));
-
   const historyTitles = await env.CONTENT_STORE.get(USED_TITLES_KEY, "json") as string[] | null;
   await env.CONTENT_STORE.put(USED_TITLES_KEY, JSON.stringify([...(historyTitles ?? []), ...blog.titles].slice(-MAX_HISTORY)));
   await env.CONTENT_STORE.put(BOOTSTRAP_LOCK, JSON.stringify({ completedAt: now.toISOString(), storageKey }));
   await env.CONTENT_STORE.put("last-run", JSON.stringify({ status: "success", type: "bootstrap", keyword, storageKey, finishedAt: now.toISOString() }));
-
   return { storageKey, record };
 }
