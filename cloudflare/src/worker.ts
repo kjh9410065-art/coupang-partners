@@ -3,8 +3,9 @@ import { getTodayRecommendation, type RecommendEnv } from "./recommend";
 /**
  * 쿠팡 상품 추천 전용 Worker입니다.
  *
- * /        오늘의 추천 상품 화면
- * /recommend  오늘의 추천 상품 JSON
+ * /          오늘의 추천 상품 화면
+ * /recommend 오늘의 추천 상품 JSON
+ * /recommend?refresh=1 기존 상품과 다른 상품을 다시 선택
  */
 
 function renderPage(): Response {
@@ -45,7 +46,7 @@ function renderPage(): Response {
       <h1>오늘 사람들이 많이 찾은 상품</h1>
       <p class="desc">오늘의 검색 관심 신호를 확인해 쿠팡 상품 하나를 추천합니다.</p>
 
-      <button id="button" onclick="loadRecommendation()">오늘의 추천 상품 보기</button>
+      <button id="button" onclick="loadRecommendation(false)">오늘의 추천 상품 보기</button>
       <div id="status"></div>
 
       <div id="result">
@@ -64,15 +65,16 @@ function renderPage(): Response {
   </main>
 
   <script>
-    async function loadRecommendation(){
+    async function loadRecommendation(refresh){
       const button=document.getElementById('button');
       const status=document.getElementById('status');
       button.disabled=true;
-      button.textContent='오늘의 상품 찾는 중...';
+      button.textContent=refresh ? '다른 상품 찾는 중...' : '오늘의 상품 찾는 중...';
       status.className='';
-      status.textContent='오늘의 검색 관심 신호 → 쿠팡 상품을 확인하고 있습니다.';
+      status.textContent=refresh ? '현재 상품과 다른 쿠팡 상품을 찾고 있습니다.' : '오늘의 검색 관심 신호 → 쿠팡 상품을 확인하고 있습니다.';
       try{
-        const response=await fetch('/recommend',{cache:'no-store'});
+        const endpoint=refresh ? '/recommend?refresh=1' : '/recommend';
+        const response=await fetch(endpoint,{cache:'no-store'});
         const result=await response.json();
         if(!response.ok || !result.ok) throw new Error(result.message || '추천 상품을 찾지 못했습니다.');
 
@@ -81,11 +83,12 @@ function renderPage(): Response {
         document.getElementById('image').src=product.productImage;
         document.getElementById('name').textContent=product.productName;
         document.getElementById('price').textContent=product.productPrice ? product.productPrice.toLocaleString('ko-KR')+'원' : '가격 확인';
-        document.getElementById('meta').textContent='오늘의 검색 관심 신호를 기준으로 선정 · 쿠팡 검색 결과 상위 상품';
+        document.getElementById('meta').textContent='오늘의 검색 관심 신호를 기준으로 선정 · 쿠팡 검색 결과 상품';
         document.getElementById('link').href=product.productUrl;
         document.getElementById('result').style.display='block';
-        status.textContent='오늘의 추천 상품입니다.';
-        button.textContent='다시 보기';
+        status.textContent=refresh ? '다른 상품으로 변경했습니다.' : '오늘의 추천 상품입니다.';
+        button.textContent='다른 상품 보기';
+        button.onclick=()=>loadRecommendation(true);
         button.disabled=false;
       }catch(error){
         status.className='error';
@@ -109,7 +112,9 @@ const handler = {
 
     if (url.pathname === "/recommend") {
       try {
-        const result = await getTodayRecommendation(env);
+        // refresh=1이면 KV에 저장된 기존 상품과 다른 상품을 선택합니다.
+        const refresh = url.searchParams.get("refresh") === "1";
+        const result = await getTodayRecommendation(env, refresh);
         return Response.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 오류";
