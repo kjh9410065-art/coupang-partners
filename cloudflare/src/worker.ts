@@ -33,6 +33,8 @@ function renderPage(): Response {
     .price{font-size:22px;font-weight:800;margin-bottom:16px}
     .meta{font-size:12px;color:#888;margin-bottom:16px}
     .link{display:block;text-align:center;text-decoration:none;background:#111827;color:#fff;padding:14px;border-radius:12px;font-weight:700}
+    .partner-url{margin-top:10px;padding:11px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb;font-size:11px;line-height:1.45;word-break:break-all;color:#666}
+    .partner-label{font-size:11px;font-weight:700;color:#333;margin-bottom:5px}
     button{width:100%;border:0;border-radius:12px;padding:14px;background:#111827;color:#fff;font-size:16px;font-weight:700;cursor:pointer}
     button:disabled{opacity:.55;cursor:wait}
     #status{margin-top:14px;text-align:center;color:#777;font-size:13px;min-height:20px}
@@ -57,8 +59,13 @@ function renderPage(): Response {
             <div id="name" class="name"></div>
             <div id="price" class="price"></div>
             <div id="meta" class="meta"></div>
-            <!-- 일반 쿠팡 URL이 아니라 파트너스 추적 단축 URL을 사용합니다. -->
+            <!-- 실제 클릭 URL은 쿠팡 파트너스 단축링크입니다. -->
             <a id="link" class="link" target="_blank" rel="noopener noreferrer">쿠팡에서 상품 보기</a>
+            <!-- 파트너스 단축링크 자체도 화면에서 확인할 수 있도록 표시합니다. -->
+            <div id="partner-url" class="partner-url" style="display:none">
+              <div class="partner-label">쿠팡 파트너스 단축링크</div>
+              <div id="partner-url-text"></div>
+            </div>
           </div>
         </article>
       </div>
@@ -85,8 +92,22 @@ function renderPage(): Response {
         document.getElementById('name').textContent=product.productName;
         document.getElementById('price').textContent=product.productPrice ? product.productPrice.toLocaleString('ko-KR')+'원' : '가격 확인';
         document.getElementById('meta').textContent='오늘의 검색 관심 신호를 기준으로 선정 · 쿠팡 검색 결과 상품';
-        // 파트너스 단축링크로 연결하여 클릭이 파트너스 추적되도록 합니다.
-        document.getElementById('link').href=product.partnerUrl || product.productUrl;
+
+        // 파트너스 단축링크를 우선 사용합니다.
+        const partnerUrl=product.partnerUrl || '';
+        document.getElementById('link').href=partnerUrl || product.productUrl;
+
+        // API에서 실제 파트너스 단축링크가 생성된 경우 화면에도 그대로 보여줍니다.
+        const partnerBox=document.getElementById('partner-url');
+        const partnerText=document.getElementById('partner-url-text');
+        if(partnerUrl){
+          partnerText.textContent=partnerUrl;
+          partnerBox.style.display='block';
+        }else{
+          partnerText.textContent='파트너스 단축링크가 생성되지 않았습니다.';
+          partnerBox.style.display='block';
+        }
+
         document.getElementById('result').style.display='block';
         status.textContent=refresh ? '다른 상품으로 변경했습니다.' : '오늘의 추천 상품입니다.';
         button.textContent='다른 상품 보기';
