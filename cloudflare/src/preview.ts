@@ -1,6 +1,6 @@
 /**
  * 생성된 쿠팡파트너스 글을 실제 블로그에 올리기 전에 확인하는 미리보기 페이지입니다.
- * 제목과 본문을 명확하게 분리하고, 본문 안에 상품 이미지를 자연스럽게 배치합니다.
+ * 제목과 본문을 명확하게 분리하고, 확보된 이미지를 본문 사이에 자연스럽게 배치합니다.
  */
 
 export interface PreviewEnv { CONTENT_STORE: KVNamespace; }
@@ -109,8 +109,8 @@ figcaption{font-size:11px;color:#8a919b;margin-top:5px}
     <div class="section-label body-label">본문</div>
     <div class="body">${renderBody(blog.body ?? "", images)}</div>
   </section>
-  ${partnerUrl ? `<a class="partner" href="${escapeHtml(partnerUrl)}" target="_blank" rel="noopener noreferrer">상품 확인하기</a>` : ""}
-  <div class="fact">상품 설명은 확인 가능한 상품 정보와 조사 자료를 기준으로 작성했습니다. 상세 기능과 구성은 상품 페이지에서 최종 확인해주세요.</div>
+  ${partnerUrl ? `<a class="partner" href="${escapeHtml(partnerUrl)}" target="_blank" rel="noopener noreferrer">상품 보러가기</a>` : ""}
+  <div class="fact">상품 설명은 제공된 상품 정보와 조사 자료를 기준으로 작성했습니다.</div>
 </article></main></body></html>`;
 
   return new Response(html, {
