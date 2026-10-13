@@ -41,7 +41,7 @@ class AutoCoupangPartnersApp(CoupangPartnersApp):
             product, post = create_today_post()
             self.root.after(0, lambda: self._auto_success(product, post))
         except Exception as exc:
-            self.root.after(0, lambda: self._auto_error(str(exc)))
+            self.root.after(0, lambda message=str(exc): self._auto_error(message))
 
     def _auto_success(self, product, post):
         """자동 생성 결과를 기존 GUI에 채웁니다."""

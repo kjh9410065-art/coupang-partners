@@ -544,7 +544,7 @@ class CoupangPartnersApp:
         # 본문 텍스트를 HTML 문단으로 변환하되, 링크 줄은 별도로 처리합니다.
         partner_url = product.get("partner_url", product.get("productUrl", ""))
         escaped_url = html.escape(partner_url, quote=True)
-        escaped_text = html.escape(raw_text)
+        escaped_text = html.escape(raw_text.removeprefix(PARTNERS_DISCLOSURE).strip())
         paragraphs = []
         for block in escaped_text.split("\n\n"):
             block = block.strip()

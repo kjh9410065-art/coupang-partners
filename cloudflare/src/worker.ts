@@ -1,4 +1,4 @@
-import { getTodayRecommendation, type RecommendEnv } from "./recommend";
+import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend";
 
 /**
  * 쿠팡 상품 추천 전용 Worker입니다.
@@ -37,6 +37,8 @@ function renderPage(): Response {
     .partner-label{font-size:11px;font-weight:700;color:#333;margin-bottom:5px}
     button{width:100%;border:0;border-radius:12px;padding:14px;background:#111827;color:#fff;font-size:16px;font-weight:700;cursor:pointer}
     button:disabled{opacity:.55;cursor:wait}
+    .disclosure{font-size:12px;color:#555;line-height:1.6;background:#f5f5f5;padding:12px;border-radius:10px;margin-bottom:18px}
+    .editor{margin-top:22px} label{display:block;font-size:14px;font-weight:700;margin:14px 0 8px} input,textarea{width:100%;padding:12px;border:1px solid #ccc;border-radius:10px;font:inherit} textarea{min-height:260px;line-height:1.7;resize:vertical} .actions{display:flex;gap:8px;margin-top:12px}.actions button{font-size:14px} .hint{font-size:12px;color:#666;line-height:1.6}
     #status{margin-top:14px;text-align:center;color:#777;font-size:13px;min-height:20px}
     .error{color:#d33!important}
   </style>
@@ -45,8 +47,9 @@ function renderPage(): Response {
   <main class="wrap">
     <section class="card">
       <div class="eyebrow">TODAY'S COUPANG PICK</div>
-      <h1>오늘 사람들이 많이 찾은 상품</h1>
-      <p class="desc">오늘의 검색 관심 신호를 확인해 쿠팡 상품 하나를 추천합니다.</p>
+      <h1>쿠팡 파트너스 글 만들기</h1>
+      <div class="disclosure">이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.</div>
+      <p class="desc">상품을 고르고 소개 글을 편집한 뒤 복사하세요.</p>
 
       <button id="button" onclick="loadRecommendation(false)">오늘의 추천 상품 보기</button>
       <div id="status"></div>
@@ -68,12 +71,53 @@ function renderPage(): Response {
             </div>
           </div>
         </article>
+        <div class="editor">
+          <button onclick="makeDraft()">이 상품으로 글 만들기</button>
+          <div id="draft" hidden>
+            <label for="draft-title">제목</label><input id="draft-title" maxlength="200">
+            <label for="draft-body">본문</label><textarea id="draft-body"></textarea>
+            <p class="hint">확인된 상품 정보만 사용한 초안입니다. 사진은 위 상품 이미지를 참고해 별도로 삽입하세요. 본문 복사 시 고지문과 파트너스 링크가 포함됩니다.</p>
+            <div class="actions"><button onclick="copyDraft('title')">제목 복사</button><button onclick="copyDraft('body')">본문 복사</button><button onclick="copyDraft('link')">링크 복사</button></div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <script>
+    let current=null;
+    const disclosure='이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
+    // 사용자 입력은 HTML로 실행하지 않고 텍스트로만 취급합니다.
+    function makeDraft(){
+      if(!current) return;
+      const p=current.product;
+      document.getElementById('draft-title').value=p.productName+' 상품 정보';
+      const lines=['상품 정보',p.productName];
+      if(p.productPrice) lines.push('조회 당시 가격: '+p.productPrice.toLocaleString('ko-KR')+'원');
+      if(p.isRocket) lines.push('검색 결과에 로켓배송 상품으로 표시되어 있습니다.');
+      lines.push('가격과 배송 조건은 선택한 옵션 및 구매 시점에 따라 달라질 수 있습니다.');
+      document.getElementById('draft-body').value=disclosure+'\\n\\n'+lines.join('\\n\\n')+'\\n\\n'+p.partnerUrl;
+      document.getElementById('draft').hidden=false;
+    }
+    async function copyDraft(kind){
+      if(!current) return;
+      let value=kind==='title'?document.getElementById('draft-title').value:kind==='link'?current.product.partnerUrl:document.getElementById('draft-body').value;
+      if(kind==='body'){
+        value=value.split(disclosure).join('').trim();
+        if(!value.includes(current.product.partnerUrl)) value+='\\n\\n'+current.product.partnerUrl;
+        value=disclosure+'\\n\\n'+value;
+      }
+      try{
+        await navigator.clipboard.writeText(value);
+        document.getElementById('status').textContent='복사했습니다.';
+      }catch{
+        const field=document.createElement('textarea');field.value=value;document.body.appendChild(field);field.select();
+        const ok=document.execCommand('copy');field.remove();
+        document.getElementById('status').textContent=ok?'복사했습니다.':'자동 복사를 사용할 수 없습니다. 입력란에서 직접 선택해 복사하세요.';
+      }
+    }
     async function loadRecommendation(refresh){
+      if(refresh && !document.getElementById('draft').hidden && !confirm('상품을 바꾸면 작성 중인 초안이 초기화됩니다. 계속할까요?')) return;
       const button=document.getElementById('button');
       const status=document.getElementById('status');
       button.disabled=true;
@@ -81,17 +125,19 @@ function renderPage(): Response {
       status.className='';
       status.textContent=refresh ? '현재 상품과 다른 쿠팡 상품을 찾고 있습니다.' : '오늘의 검색 관심 신호 → 쿠팡 상품을 확인하고 있습니다.';
       try{
-        const endpoint=refresh ? '/recommend?refresh=1' : '/recommend';
+        const endpoint=refresh && current ? '/recommend?refresh=1&keyword='+encodeURIComponent(current.keyword)+'&rank='+current.product.rank : '/recommend';
         const response=await fetch(endpoint,{cache:'no-store'});
         const result=await response.json();
         if(!response.ok || !result.ok) throw new Error(result.message || '추천 상품을 찾지 못했습니다.');
 
+        current=result;
+        document.getElementById('draft').hidden=true;
         const product=result.product;
-        document.getElementById('keyword').textContent='오늘의 검색어 · '+result.keyword;
+        document.getElementById('keyword').textContent=(result.source==='fallback'?'기본 추천 주제 · ':'검색 관심 주제 · ')+result.keyword;
         document.getElementById('image').src=product.productImage;
         document.getElementById('name').textContent=product.productName;
         document.getElementById('price').textContent=product.productPrice ? product.productPrice.toLocaleString('ko-KR')+'원' : '가격 확인';
-        document.getElementById('meta').textContent='오늘의 검색 관심 신호를 기준으로 선정 · 쿠팡 검색 결과 상품';
+        document.getElementById('meta').textContent='쿠팡 검색 '+product.rank+'위 · '+(result.source==='fallback'?'기본 주제로 추천':'검색 관심 신호로 추천');
 
         // 파트너스 단축링크를 우선 사용합니다.
         const partnerUrl=product.partnerUrl || '';
@@ -128,6 +174,16 @@ function renderPage(): Response {
 }
 
 const handler = {
+  /** 예약 실행도 실제 배포 진입점에서 처리하고 최근 결과를 기록합니다. */
+  async scheduled(_controller: unknown, env: RecommendEnv) {
+    try {
+      await getTodayRecommendation(env);
+      await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "success", date: koreaDate(), finishedAt: new Date().toISOString() }));
+    } catch (error) {
+      await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "failed", finishedAt: new Date().toISOString() }));
+      throw error;
+    }
+  },
   async fetch(request: Request, env: RecommendEnv) {
     const url = new URL(request.url);
 
@@ -137,7 +193,10 @@ const handler = {
       try {
         // refresh=1이면 KV에 저장된 기존 상품과 다른 상품을 선택합니다.
         const refresh = url.searchParams.get("refresh") === "1";
-        const result = await getTodayRecommendation(env, refresh);
+        const keyword = url.searchParams.get("keyword") || "";
+        const rank = Number(url.searchParams.get("rank"));
+        const selection = keyword && keyword.length <= 100 && Number.isInteger(rank) && rank > 0 && rank <= 999 ? { keyword, rank } : undefined;
+        const result = await getTodayRecommendation(env, refresh, selection);
         return Response.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 오류";

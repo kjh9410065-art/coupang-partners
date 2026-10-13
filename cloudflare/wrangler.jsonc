@@ -4,7 +4,7 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-08",
 
-  // Cloudflare Workers AI를 Gemini 장애 시 대체 생성기로 사용합니다.
+  // 기존 Workers AI 바인딩을 보존합니다. 현재 추천/초안 흐름은 AI를 호출하지 않습니다.
   "ai": {
     "binding": "AI"
   },
@@ -16,7 +16,7 @@
     }
   ],
 
-  // 한국시간 매일 오전 9시(UTC 00:00)에 하루 한 편만 자동 생성합니다.
+  // 한국시간 매일 오전 9시(UTC 00:00)에 오늘의 추천 캐시를 준비합니다.
   "triggers": {
     "crons": ["0 0 * * *"]
   }

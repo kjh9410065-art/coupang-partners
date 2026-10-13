@@ -132,25 +132,20 @@ def generate_auto_blog(product):
     keyword = product.get("trend_keyword", "")
     partner_url = product.get("partner_url", "")
 
+    # 일반 GUI와 같은 항목 형식으로 무료 생성기에 전달합니다.
     prompt = f"""
-[상품명]
-{name}
-[가격]
-{price}
-[트렌드 검색어]
-{keyword}
-[파트너스 링크]
+[선택한 제목]
+{name} 상품 정보
+[상품 정보]
+상품명: {name}
+로켓배송 여부: {product.get('isRocket', False)}
+무료배송 여부: {product.get('isFreeShipping', False)}
+[마지막 링크]
 {partner_url}
-
-네이버 블로그에 바로 붙여넣을 수 있는 쿠팡파트너스 상품 소개 글을 작성해라.
-상품명에 실제로 표시된 정보만 사용하고 성능, 재질, 용도, 할인, 가격 혜택을 추측하지 마라.
-사용 후기나 내돈내산 경험처럼 쓰지 마라.
-글은 짧고 자연스럽게 작성하며 같은 내용을 반복하지 마라.
-첫 줄에는 반드시 쿠팡파트너스 고지문을 넣어라.
 """
-
-    body = generate_text(prompt)
-    return body.strip()
+    body = generate_text(prompt).strip()
+    disclosure = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+    return f"{disclosure}\n\n{body}"
 
 
 def create_today_post():

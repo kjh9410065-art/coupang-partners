@@ -17,7 +17,12 @@ export interface RecommendEnv {
 const COUPANG_HOST = "https://api-gateway.coupang.com";
 const COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/products/search";
 const COUPANG_DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink";
-const DAILY_KEY = "recommend:today:v5";
+const DAILY_KEY = "recommend:today:v6";
+
+/** 한국 날짜로 추천 캐시를 구분합니다. */
+export function koreaDate() {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
 
 const BLOCKED_WORDS = [
   "대통령", "국회", "선거", "정치", "사망", "사건", "사고", "축구", "야구", "농구",
@@ -44,6 +49,7 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
   // 1~10위까지 받아서 '다른 상품 보기'에서 순위대로 넘길 수 있게 합니다.
   const query = `keyword=${encodeURIComponent(keyword)}&limit=10`;
   const response = await fetch(`${COUPANG_HOST}${COUPANG_SEARCH_PATH}?${query}`, {
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: await createAuthorization(env, "GET", COUPANG_SEARCH_PATH, query),
       "Content-Type": "application/json;charset=UTF-8",
@@ -58,7 +64,7 @@ async function searchCoupang(env: RecommendEnv, keyword: string) {
     throw new Error(`쿠팡 검색 응답 오류 (${response.status})`);
   }
 
-  if (!response.ok || data?.rCode !== "0") {
+  if (!response.ok || String(data?.rCode) !== "0") {
     throw new Error(`쿠팡 검색 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
   }
 
@@ -93,6 +99,7 @@ async function createPartnerShortUrl(env: RecommendEnv, productId: string, origi
   const body = JSON.stringify({ coupangUrls: [canonicalUrl] });
   const response = await fetch(`${COUPANG_HOST}${COUPANG_DEEPLINK_PATH}`, {
     method: "POST",
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: await createAuthorization(env, "POST", COUPANG_DEEPLINK_PATH),
       "Content-Type": "application/json;charset=UTF-8",
@@ -108,7 +115,7 @@ async function createPartnerShortUrl(env: RecommendEnv, productId: string, origi
     throw new Error(`파트너스 딥링크 응답 오류 (${response.status})`);
   }
 
-  if (!response.ok || data?.rCode !== "0") {
+  if (!response.ok || String(data?.rCode) !== "0") {
     throw new Error(`파트너스 딥링크 API 오류 ${data?.rCode ? `[${data.rCode}] ` : ""}${data?.rMessage || response.status}`);
   }
 
@@ -121,6 +128,7 @@ async function getGoogleTrends(): Promise<string[]> {
   try {
     const response = await fetch("https://trends.google.com/trending/rss?geo=KR", {
       headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return [];
 
@@ -155,8 +163,8 @@ function pickByRank(products: any[], currentRank?: number) {
   return products[0];
 }
 
-export async function getTodayRecommendation(env: RecommendEnv, refresh = false) {
-  const today = new Date().toISOString().slice(0, 10);
+export async function getTodayRecommendation(env: RecommendEnv, refresh = false, selection?: { keyword: string; rank: number }) {
+  const today = koreaDate();
   const cached = env.CONTENT_STORE
     ? await env.CONTENT_STORE.get(DAILY_KEY, "json") as any
     : null;
@@ -164,18 +172,19 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
   if (!refresh && cached?.date === today && cached?.product) return cached;
 
   const trends = await getGoogleTrends();
-  const keywords = cached?.keyword
-    ? [cached.keyword, ...trends.filter((keyword) => keyword !== cached.keyword), "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"]
+  const previous = selection || (cached?.date === today ? { keyword: cached.keyword, rank: Number(cached.product?.rank) } : null);
+  const keywords = previous?.keyword
+    ? [previous.keyword, ...trends.filter((keyword) => keyword !== previous.keyword), "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"]
     : [...trends, "무선청소기", "무선이어폰", "캠핑용품", "생활용품", "주방용품"];
 
   let lastError = "오늘 추천할 쿠팡 상품을 찾지 못했습니다.";
 
-  for (const keyword of keywords) {
+  for (const keyword of [...new Set(keywords)]) {
     try {
       const products = await searchCoupang(env, keyword);
       if (!products.length) continue;
 
-      const currentRank = refresh && cached?.keyword === keyword ? Number(cached.product?.rank) : undefined;
+      const currentRank = refresh && previous?.keyword === keyword ? previous.rank : undefined;
       const product = pickByRank(products, currentRank);
       if (!product) continue;
 
@@ -190,7 +199,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false)
         generatedAt: new Date().toISOString(),
       };
 
-      if (env.CONTENT_STORE) {
+      if (env.CONTENT_STORE && !refresh) {
         await env.CONTENT_STORE.put(DAILY_KEY, JSON.stringify(result), { expirationTtl: 60 * 60 * 30 });
       }
       return result;
