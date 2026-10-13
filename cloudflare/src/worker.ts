@@ -1,3 +1,4 @@
+import { buildBlog } from "./blog";
 import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend";
 
 /**
@@ -49,9 +50,9 @@ function renderPage(): Response {
       <div class="eyebrow">TODAY'S COUPANG PICK</div>
       <h1>쿠팡 파트너스 글 만들기</h1>
       <div class="disclosure">이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.</div>
-      <p class="desc">상품을 고르고 소개 글을 편집한 뒤 복사하세요.</p>
+      <p class="desc">상품을 자동으로 고르고 블로그 글까지 작성합니다. 확인 후 복사해서 게시하세요.</p>
 
-      <button id="button" onclick="loadRecommendation(false)">오늘의 추천 상품 보기</button>
+      <button id="button" onclick="loadRecommendation(false)">상품 자동 선정 + 글 작성</button>
       <div id="status"></div>
 
       <div id="result">
@@ -72,7 +73,7 @@ function renderPage(): Response {
           </div>
         </article>
         <div class="editor">
-          <button onclick="makeDraft()">이 상품으로 글 만들기</button>
+          <p class="hint">상품에 맞춰 글이 작성되었습니다. 제목과 본문을 자유롭게 수정하세요.</p>
           <div id="draft" hidden>
             <label for="draft-title">제목</label><input id="draft-title" maxlength="200">
             <label for="draft-body">본문</label><textarea id="draft-body"></textarea>
@@ -86,17 +87,15 @@ function renderPage(): Response {
 
   <script>
     let current=null;
+    let originalTitle='', originalBody='';
     const disclosure='이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.';
     // 사용자 입력은 HTML로 실행하지 않고 텍스트로만 취급합니다.
     function makeDraft(){
       if(!current) return;
-      const p=current.product;
-      document.getElementById('draft-title').value=p.productName+' 상품 정보';
-      const lines=['상품 정보',p.productName];
-      if(p.productPrice) lines.push('조회 당시 가격: '+p.productPrice.toLocaleString('ko-KR')+'원');
-      if(p.isRocket) lines.push('검색 결과에 로켓배송 상품으로 표시되어 있습니다.');
-      lines.push('가격과 배송 조건은 선택한 옵션 및 구매 시점에 따라 달라질 수 있습니다.');
-      document.getElementById('draft-body').value=disclosure+'\\n\\n'+lines.join('\\n\\n')+'\\n\\n'+p.partnerUrl;
+      originalTitle=current.blog.title;
+      originalBody=current.blog.body;
+      document.getElementById('draft-title').value=originalTitle;
+      document.getElementById('draft-body').value=originalBody;
       document.getElementById('draft').hidden=false;
     }
     async function copyDraft(kind){
@@ -117,7 +116,7 @@ function renderPage(): Response {
       }
     }
     async function loadRecommendation(refresh){
-      if(refresh && !document.getElementById('draft').hidden && !confirm('상품을 바꾸면 작성 중인 초안이 초기화됩니다. 계속할까요?')) return;
+      if(refresh && (document.getElementById('draft-title').value!==originalTitle || document.getElementById('draft-body').value!==originalBody) && !confirm('상품을 바꾸면 작성 중인 초안이 초기화됩니다. 계속할까요?')) return;
       const button=document.getElementById('button');
       const status=document.getElementById('status');
       button.disabled=true;
@@ -130,6 +129,7 @@ function renderPage(): Response {
         const result=await response.json();
         if(!response.ok || !result.ok) throw new Error(result.message || '추천 상품을 찾지 못했습니다.');
 
+        if(!result.blog || !result.blog.body) throw new Error('글 작성 결과를 받지 못했습니다. 다시 시도해주세요.');
         current=result;
         document.getElementById('draft').hidden=true;
         const product=result.product;
@@ -155,8 +155,9 @@ function renderPage(): Response {
         }
 
         document.getElementById('result').style.display='block';
-        status.textContent=refresh ? '다른 상품으로 변경했습니다.' : '오늘의 추천 상품입니다.';
-        button.textContent='다른 상품 보기';
+        makeDraft();
+        status.textContent=refresh ? '다른 상품과 새 글을 준비했습니다.' : '상품 자동 선정과 글 작성을 완료했습니다.';
+        button.textContent='다른 상품으로 글 다시 만들기';
         button.onclick=()=>loadRecommendation(true);
         button.disabled=false;
       }catch(error){
@@ -166,6 +167,8 @@ function renderPage(): Response {
         button.textContent='다시 시도하기';
       }
     }
+    // 페이지를 열면 상품 선정과 글 작성을 한 번에 시작합니다.
+    loadRecommendation(false);
   </script>
 </body>
 </html>`;
@@ -177,7 +180,8 @@ const handler = {
   /** 예약 실행도 실제 배포 진입점에서 처리하고 최근 결과를 기록합니다. */
   async scheduled(_controller: unknown, env: RecommendEnv) {
     try {
-      await getTodayRecommendation(env);
+      const recommendation = await getTodayRecommendation(env);
+      await env.CONTENT_STORE?.put("latest:blog", JSON.stringify({ ...buildBlog(recommendation), productId: recommendation.product.productId, generatedAt: new Date().toISOString() }));
       await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "success", date: koreaDate(), finishedAt: new Date().toISOString() }));
     } catch (error) {
       await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "failed", finishedAt: new Date().toISOString() }));
@@ -197,7 +201,7 @@ const handler = {
         const rank = Number(url.searchParams.get("rank"));
         const selection = keyword && keyword.length <= 100 && Number.isInteger(rank) && rank > 0 && rank <= 999 ? { keyword, rank } : undefined;
         const result = await getTodayRecommendation(env, refresh, selection);
-        return Response.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
+        return Response.json({ ok: true, ...result, blog: buildBlog(result) }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 오류";
         return Response.json({ ok: false, message }, { status: 500, headers: { "Cache-Control": "no-store" } });
