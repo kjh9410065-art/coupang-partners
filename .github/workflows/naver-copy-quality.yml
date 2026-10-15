@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $errors = $null
-          foreach ($file in @('cloudflare/pc-sync/setup.ps1', 'cloudflare/pc-sync/sync.ps1')) {
+          foreach ($file in @('cloudflare/pc-sync/setup.ps1', 'cloudflare/pc-sync/sync.ps1', 'cloudflare/pc-sync/render-post.ps1', 'cloudflare/pc-sync/test-render.ps1')) {
             $errors = $null
             $tokens = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
@@ -41,3 +41,6 @@ jobs:
               exit 1
             }
           }
+      - name: Generate an offline HTML post and inspect its content
+        shell: pwsh
+        run: ./cloudflare/pc-sync/test-render.ps1
