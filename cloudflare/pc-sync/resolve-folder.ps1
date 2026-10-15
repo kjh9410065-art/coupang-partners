@@ -1,4 +1,4 @@
-# Windows Documents folder is the no-cloud default; existing installed folder remains unchanged.
+﻿# Windows Documents folder is the no-cloud default; existing installed folder remains unchanged.
 # Optional OneDrive integration is retained for users who already have it installed.
 function Resolve-CoupangDraftOutputFolder {
     [CmdletBinding()]
