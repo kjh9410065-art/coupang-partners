@@ -74,43 +74,7 @@ try {
 
         # Cloudflare KV에 저장한 원본 이미지 바이트를 내려받습니다.
         $imageName = [string]$draft.imageFilename
-        if ($imageName -notmatch '^product\.(jpg|png|webp|svg)
-            Log ("SKIP invalid image filename " + $draft.id); continue
-        }
-        $imagePath = Join-Path $draftDir $imageName
-        if (-not (Test-Path -LiteralPath $imagePath) -or (Get-Item -LiteralPath $imagePath).Length -eq 0) {
-            $temp = $imagePath + ".download"
-            try {
-                Invoke-WebRequest -UseBasicParsing -Method Get -Uri ($urlBase + "/sync/drafts/" + $draft.id + "/image") -Headers $headers -TimeoutSec 60 -OutFile $temp | Out-Null
-                if ((Get-Item -LiteralPath $temp).Length -eq 0) { throw "이미지가 비어 있습니다." }
-                Move-Item -LiteralPath $temp -Destination $imagePath -Force
-            } catch {
-                Remove-Item -LiteralPath $temp -ErrorAction SilentlyContinue
-                Log ("IMAGE ERROR " + $draft.id + " " + $_.Exception.Message)
-                continue
-            }
-        }
-        # 글과 이미지를 한 파일에서 볼 수 있는 오프라인 '완성글.html'도 생성합니다.
-        # 사용자가 손본 파일은 덮어쓰지 않습니다.
-        try {
-            $readyHtml = Join-Path $draftDir "완성글.html"
-            Write-CompletedPost -Draft $draft -ImagePath $imagePath -Destination $readyHtml | Out-Null
-        } catch {
-            Log ("HTML ERROR " + $draft.id + " " + $_.Exception.Message)
-            continue
-        }
-        $count++
-    }
-    Log ("OK checked=" + @($response.drafts).Count + " ready=" + $count)
-}
-catch {
-    Log ("ERROR " + $_.Exception.Message)
-    throw
-}
-finally {
-    $token = $null
-}
-) {
+        if ($imageName -notmatch '^product\.(jpg|png|webp|svg)$') {
             Log ("SKIP invalid image filename " + $draft.id); continue
         }
         $imagePath = Join-Path $draftDir $imageName
