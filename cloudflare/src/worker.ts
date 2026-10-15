@@ -1,4 +1,5 @@
 import { buildBlog } from "./blog";
+import { draftKey, saveBlogDraft, handleDraftSync, type StoredDraft } from "./draft-sync";
 import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend";
 
 /**
@@ -10,7 +11,7 @@ import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommen
  */
 
 
-type BlogEnv = RecommendEnv & { AI?: Ai };
+type BlogEnv = RecommendEnv & { AI?: Ai; DRAFT_SYNC_TOKEN?: string };
 
 /** 동일한 상품/가격의 원고는 일정 시간 저장해 AI 호출을 반복하지 않습니다. */
 async function getPreparedBlog(recommendation: any, env: BlogEnv) {
@@ -191,19 +192,52 @@ function renderPage(): Response {
 }
 
 const handler = {
-  /** 예약 실행도 실제 배포 진입점에서 처리하고 최근 결과를 기록합니다. */
-  async scheduled(_controller: unknown, env: BlogEnv) {
+  /**
+   * 한국시간 09:00/18:00에 서로 다른 상품 글과 공식 이미지 1장을 생성합니다.
+   * 10:00/19:00은 실패 복구용 실행이며 성공한 글을 다시 생성하지 않습니다.
+   */
+  async scheduled(controller: { cron?: string }, env: BlogEnv) {
+    const date = koreaDate();
+    const slot = controller.cron === "0 9 * * *" || controller.cron === "0 10 * * *"
+      ? "evening" : "morning";
+    const id = date + "-" + slot;
     try {
-      const recommendation = await getTodayRecommendation(env);
-      await env.CONTENT_STORE?.put("latest:blog", JSON.stringify({ ...(await getPreparedBlog(recommendation, env)), productId: recommendation.product.productId, generatedAt: new Date().toISOString() }));
-      await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "success", date: koreaDate(), finishedAt: new Date().toISOString() }));
+      if (!env.CONTENT_STORE) throw new Error("CONTENT_STORE KV 바인딩 없음");
+      // 재시도 실행에서도 한 날짜/시간대당 게시용 파일은 딱 하나만 저장합니다.
+      const already = await env.CONTENT_STORE.get(draftKey(id), "json") as StoredDraft | null;
+      if (already) return;
+      const firstDraft = slot === "evening"
+        ? await env.CONTENT_STORE.get(draftKey(date + "-morning"), "json") as StoredDraft | null
+        : null;
+      const recommendation = await getTodayRecommendation(
+        env,
+        slot === "evening",
+        firstDraft ? { keyword: firstDraft.keyword, rank: firstDraft.rank } : undefined,
+        firstDraft ? [firstDraft.productId] : [],
+      );
+      const blog = await getPreparedBlog(recommendation, env);
+      const saved = await saveBlogDraft(env, { date, slot, recommendation, blog });
+      // 기존 수동 미리보기 데이터를 유지합니다.
+      await env.CONTENT_STORE.put("latest:blog", JSON.stringify({
+        ...blog, productId: recommendation.product.productId, generatedAt: saved.createdAt,
+      }));
+      await env.CONTENT_STORE.put("last-run", JSON.stringify({
+        status: "success", date, slot, id, finishedAt: new Date().toISOString(),
+      }));
     } catch (error) {
-      await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "failed", finishedAt: new Date().toISOString() }));
+      await env.CONTENT_STORE?.put("last-run", JSON.stringify({
+        status: "failed", date, slot,
+        reason: error instanceof Error ? error.message : "알 수 없는 오류",
+        finishedAt: new Date().toISOString(),
+      }));
       throw error;
     }
   },
   async fetch(request: Request, env: BlogEnv) {
     const url = new URL(request.url);
+
+    // 파일 목록과 이미지 내려받기는 비밀 동기화 토큰이 있어야 가능합니다.
+    if (url.pathname.startsWith("/sync/")) return handleDraftSync(request, env);
 
     if (url.pathname === "/") return renderPage();
 
