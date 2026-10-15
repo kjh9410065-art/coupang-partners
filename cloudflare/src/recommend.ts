@@ -169,7 +169,13 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false,
     ? await env.CONTENT_STORE.get(DAILY_KEY, "json") as any
     : null;
 
-  if (!refresh && cached?.date === today && cached?.product) return cached;
+  // 가격이 시간에 따라 변하므로 이전 추천을 무기한 당일 재사용하지 않습니다.
+  // 30분이 지나면 쿠팡 API를 다시 조회해 상품/가격/배송 정보를 최신화합니다.
+  const cachedAge = Date.now() - Date.parse(String(cached?.generatedAt ?? ""));
+  if (!refresh && cached?.date === today && cached?.product &&
+      Number.isFinite(cachedAge) && cachedAge >= 0 && cachedAge <= 30 * 60 * 1000) {
+    return cached;
+  }
 
   const trends = await getGoogleTrends();
   const previous = selection || (cached?.date === today ? { keyword: cached.keyword, rank: Number(cached.product?.rank) } : null);
@@ -200,7 +206,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false,
       };
 
       if (env.CONTENT_STORE && !refresh) {
-        await env.CONTENT_STORE.put(DAILY_KEY, JSON.stringify(result), { expirationTtl: 60 * 60 * 30 });
+        await env.CONTENT_STORE.put(DAILY_KEY, JSON.stringify(result), { expirationTtl: 60 * 30 });
       }
       return result;
     } catch (error) {

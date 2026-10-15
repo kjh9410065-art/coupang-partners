@@ -1,0 +1,22 @@
+name: Naver copy quality checks
+on:
+  pull_request:
+    paths:
+      - 'cloudflare/src/blog.ts'
+      - 'cloudflare/src/worker.ts'
+      - 'cloudflare/tests/**'
+      - '.github/workflows/naver-copy-quality.yml'
+  workflow_dispatch:
+
+jobs:
+  copy-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run mock AI article tests
+        run: node --experimental-strip-types --test cloudflare/tests/*.test.mjs

@@ -9,6 +9,20 @@ import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommen
  * /recommend?refresh=1 기존 상품과 다른 상품을 다시 선택
  */
 
+
+type BlogEnv = RecommendEnv & { AI?: Ai };
+
+/** 동일한 상품/가격의 원고는 일정 시간 저장해 AI 호출을 반복하지 않습니다. */
+async function getPreparedBlog(recommendation: any, env: BlogEnv) {
+  const p = recommendation.product;
+  const key = ["naver-copy:ai:v1", koreaDate(), p.productId, p.productPrice ?? "unknown"].join(":");
+  const saved = await env.CONTENT_STORE?.get(key, "json");
+  if (saved && typeof (saved as any).body === "string") return saved;
+  const written = await buildBlog(recommendation, env.AI);
+  await env.CONTENT_STORE?.put(key, JSON.stringify(written), { expirationTtl: 60 * 60 * 3 });
+  return written;
+}
+
 function renderPage(): Response {
   const html = `<!doctype html>
 <html lang="ko">
@@ -178,17 +192,17 @@ function renderPage(): Response {
 
 const handler = {
   /** 예약 실행도 실제 배포 진입점에서 처리하고 최근 결과를 기록합니다. */
-  async scheduled(_controller: unknown, env: RecommendEnv) {
+  async scheduled(_controller: unknown, env: BlogEnv) {
     try {
       const recommendation = await getTodayRecommendation(env);
-      await env.CONTENT_STORE?.put("latest:blog", JSON.stringify({ ...buildBlog(recommendation), productId: recommendation.product.productId, generatedAt: new Date().toISOString() }));
+      await env.CONTENT_STORE?.put("latest:blog", JSON.stringify({ ...(await getPreparedBlog(recommendation, env)), productId: recommendation.product.productId, generatedAt: new Date().toISOString() }));
       await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "success", date: koreaDate(), finishedAt: new Date().toISOString() }));
     } catch (error) {
       await env.CONTENT_STORE?.put("last-run", JSON.stringify({ status: "failed", finishedAt: new Date().toISOString() }));
       throw error;
     }
   },
-  async fetch(request: Request, env: RecommendEnv) {
+  async fetch(request: Request, env: BlogEnv) {
     const url = new URL(request.url);
 
     if (url.pathname === "/") return renderPage();
@@ -201,7 +215,7 @@ const handler = {
         const rank = Number(url.searchParams.get("rank"));
         const selection = keyword && keyword.length <= 100 && Number.isInteger(rank) && rank > 0 && rank <= 999 ? { keyword, rank } : undefined;
         const result = await getTodayRecommendation(env, refresh, selection);
-        return Response.json({ ok: true, ...result, blog: buildBlog(result) }, { headers: { "Cache-Control": "no-store" } });
+        return Response.json({ ok: true, ...result, blog: await getPreparedBlog(result, env) }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         const message = error instanceof Error ? error.message : "알 수 없는 오류";
         return Response.json({ ok: false, message }, { status: 500, headers: { "Cache-Control": "no-store" } });
