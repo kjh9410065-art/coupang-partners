@@ -15,6 +15,7 @@ export interface StoredDraft {
   createdAt: string;
   keyword: string;
   productId: string;
+  rank: number;
   productName: string;
   productPrice: number;
   priceCheckedAt: string;
@@ -105,6 +106,7 @@ export async function saveBlogDraft(
     id, date, slot, createdAt: new Date().toISOString(),
     keyword: String(recommendation.keyword ?? ""),
     productId,
+    rank: Number(product.rank) || 0,
     productName: String(product.productName ?? ""),
     productPrice: Number(product.productPrice) || 0,
     priceCheckedAt: String(recommendation.generatedAt ?? new Date().toISOString()),
