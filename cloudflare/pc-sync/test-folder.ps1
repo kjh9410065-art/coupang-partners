@@ -1,4 +1,4 @@
-# Verify Windows-only installation can save to a local Documents folder.
+﻿# Verify Windows-only installation can save to a local Documents folder.
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "resolve-folder.ps1")
 $root = Join-Path ([IO.Path]::GetTempPath()) ("draft-folder-test-" + [guid]::NewGuid().ToString("n"))
