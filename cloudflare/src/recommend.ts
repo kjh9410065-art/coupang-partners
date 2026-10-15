@@ -163,7 +163,7 @@ function pickByRank(products: any[], currentRank?: number) {
   return products[0];
 }
 
-export async function getTodayRecommendation(env: RecommendEnv, refresh = false, selection?: { keyword: string; rank: number }) {
+export async function getTodayRecommendation(env: RecommendEnv, refresh = false, selection?: { keyword: string; rank: number }, excludedProductIds: string[] = []) {
   const today = koreaDate();
   const cached = env.CONTENT_STORE
     ? await env.CONTENT_STORE.get(DAILY_KEY, "json") as any
@@ -191,7 +191,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false,
       if (!products.length) continue;
 
       const currentRank = refresh && previous?.keyword === keyword ? previous.rank : undefined;
-      const product = pickByRank(products, currentRank);
+      const product = pickByRank(products.filter((candidate: any) => !excludedProductIds.includes(String(candidate.productId))), currentRank);
       if (!product) continue;
 
       // 상품 ID로 정규화한 URL을 쿠팡 파트너스 단축링크로 변환합니다.
