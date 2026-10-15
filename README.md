@@ -1,25 +1,45 @@
 # coupang-partners
 
-쿠팡 상품 선택과 블로그 초안 작성을 돕는 반자동 도구입니다. 자동 게시하지 않습니다.
+쿠팡 상품을 자동으로 선정하고 실제 Workers AI로 검증 가능한 네이버 블로그 글을 작성하는 도구입니다. 네이버 자동 게시 기능은 없습니다.
 
-## 웹 버전
+## 클라우드에서 하루 2회 글과 상품 이미지 생성
 
-- 페이지 접속 시 상품 자동 선정 → 파트너스 단축링크 생성 → 블로그 글 작성
-- 다른 상품으로 변경 시 글도 자동으로 새로 작성 (직접 편집한 글은 변경 전 확인)
-- 확인된 상품명·구성·옵션·규격·조회 가격·배송 표시로 소개 글 생성 (외부 AI 호출 없음)
-- 제목·본문 편집, 제목/본문/링크 복사
-- 본문 복사 시 상단 고지문과 파트너스 링크 포함
-- 한국 날짜 기준 캐시, 기본 추천과 검색 관심 신호 구분
-- 매일 한국시간 오전 9시 추천 캐시와 블로그 글 준비 및 실행 결과 저장
+- 한국시간 오전 9시(UTC 00:00) 1건, 오후 6시(UTC 09:00) 1건 자동 생성
+- 오전 10시 / 오후 7시 재시도: 이미 성공한 글은 중복 생성하지 않음
+- 오전·오후에 서로 다른 상품을 선택하고 쿠팡 API 조회 시점 가격·파트너스 단축링크 사용
+- 상품명으로 검증되지 않은 내용을 꾸며내지 않고, 품질 검사를 통과한 글만 저장
+- 글 본문·제목·고지문·가격 메타데이터 및 쿠팡의 공식 상품 이미지 1장을 KV에 최대 120일 보관
+- PC가 꺼져 있어도 Cloudflare에서 원고와 이미지 생성 (Cloudflare Worker 실제 배포 필요)
+- 동기화 API `GET /sync/drafts`, `GET /sync/drafts/{id}/image`는 인증키 없이는 접근 불가
 
-Cloudflare 배포 설정은 `cloudflare/wrangler.jsonc`, 진입점은 `cloudflare/src/worker.ts`입니다. `COUPANG_ACCESS_KEY`, `COUPANG_SECRET_KEY` 비밀값과 `CONTENT_STORE` KV 바인딩이 필요합니다. 기존 Worker 이름과 배포 설정은 Cloudflare 프로젝트 설정도 확인하세요.
+## Windows + OneDrive 자동 동기화 설치
 
-## Windows PC 버전
+1. **OneDrive 앱에 로그인**하여 PC의 OneDrive 폴더가 있는지 확인합니다.
+2. GitHub의 저장소 ZIP을 내려받아 압축을 풉니다.
+3. `cloudflare/pc-sync/install.bat`를 더블클릭합니다.
+4. 기존 Cloudflare Worker HTTPS 주소를 입력합니다. 예: `https://<actual-worker>.workers.dev`.
+5. 설치 프로그램이 보여주는 **동기화 키**를 복사해 Cloudflare의 기존 Worker **Settings → Variables and Secrets**에서 `DRAFT_SYNC_TOKEN` 이름의 **Secret**으로 등록합니다. 정확히 같은 값이어야 합니다.
+6. 기존 Cloudflare Worker 프로젝트에 업데이트된 코드를 배포하고 `CONTENT_STORE` KV, 쿠팡 API 비밀 키, `AI` 바인딩이 연결됐는지 확인합니다.
+7. PC를 다시 켜거나 로그인하면 자동 동기화됩니다. 로그인 후 매시간 자동 확인합니다.
 
-1. `pip install -r requirements.txt`
-2. 프로젝트 `.env`에 `COUPANG_ACCESS_KEY`, `COUPANG_SECRET_KEY` 설정
-3. `python main.py` 실행 (자동 상품 선택 기능은 `python auto_app.py`)
+PC 파일 저장 위치: `OneDrive\CoupangBlogDrafts\YYYY-MM-DD\01_morning_상품ID\` 및 `02_evening_상품ID\`.
 
-`gemini_api.py`는 기존 파일명을 유지한 로컬 문장 생성기입니다. 현재 Gemini API를 호출하지 않으며 Gemini 키가 필요하지 않습니다.
+폴더마다:
+- `title.txt`: 네이버 글 제목
+- `body.txt`: 광고 고지문을 포함한 블로그 본문과 쿠팡 파트너스 링크
+- `post.txt`: 제목부터 본문까지 전체 복사용
+- `product-link.txt`: 쿠팡 파트너스 링크
+- `product.jpg` 또는 `product.png` / `product.webp`: 공식 상품 이미지 1장
+- `meta.json`: 가격과 조회 시각 및 상품 데이터
 
-API 비밀키가 들어 있는 `.env`는 저장소에 올리지 않습니다. 이미지와 블로그 게시 작업은 직접 확인 후 진행합니다.
+동기화 클라이언트는 수동으로 수정한 파일을 덮어쓰지 않습니다. PC가 꺼져 있던 동안 생성된 글은 다음 로그인 시점에 내려받으며, OneDrive 자체 동기화도 적용됩니다. Cloudflare KV 저장 만료 기간은 **120일**입니다. 상품 가격·품절·배송 조건은 변할 수 있으므로 **게시 직전 최신 상태를 다시 확인**하세요.
+
+원고 생성은 AI 사용량에 따라 비용이 발생할 수 있습니다. Cloudflare Secret은 GitHub 저장소나 OneDrive에 올리지 마세요. PC 인증 키는 Windows 로그인 사용자에게 묶인 암호화 저장소(`%LOCALAPPDATA%\CoupangDraftSync\settings.json`)에 보관됩니다.
+
+## 설치가 아직 끝나지 않았을 때
+
+GitHub에 코드를 반영하는 것만으로 Cloudflare의 실제 배포와 Windows 동기화 설정이 완료되는 것은 아닙니다. 설정이 되기 전에는 스케줄이 실행되지 않거나 `401 Unauthorized`가 반환될 수 있습니다.
+
+## Windows 기존 로컬 도구
+
+`python main.py` 및 `python auto_app.py`로 구동하는 로컬 보조 도구는 그대로 유지됩니다. 데스크톱의 `gemini_api.py`는 정형 문장 생성기이고, 새 Cloudflare Workers AI 글 작성기와는 다릅니다.
