@@ -1,5 +1,14 @@
 # ChatGPT Work 인계 문서 — 쿠팡 파트너스 + TCFLiCK 네이버 블로그 초안 자동화
 
+## 2026-10-15 저장 방식 변경: OneDrive 사용하지 않음 (최우선 인계)
+- 사용자는 **OneDrive가 없다고 확인**했습니다. 이후 Work는 OneDrive 설치를 필수 조건으로 요구하지 마세요.
+- GitHub `cloudflare/pc-sync/setup.ps1`는 PC의 OneDrive가 없으면 Windows **문서(CoupangBlogDrafts)** 폴더로 저장하고, 기존 사용자가 설정한 정상 폴더가 있으면 그대로 유지하도록 변경했습니다.
+- `resolve-folder.ps1` 및 `test-folder.ps1`로 OneDrive 없는 Windows 환경과 재설치 경로 보존을 테스트합니다.
+- 하루 **쿠팡 2개 + TCFLiCK 홍보 1개** 총 3개 목표는 유지합니다. HTML 원고·이미지·링크·수동 게시/수동 태그도 변함없습니다.
+- 로컬 문서 폴더에 저장된 원고는 OneDrive를 통한 다른 기기 자동 동기화가 되지 않습니다. Cloudflare Worker가 생성한 초안은 기존 120일 KV 보관 정책을 따릅니다.
+- 기존 인계 문서 본문의 'OneDrive 로그인' 또는 '하루 2개' 지시는 과거 정보입니다. **이 섹션과 3개 수량 수정 사항을 우선합니다.**
+
+
 작성 기준: 2026-10-15 (KST). 이 문서는 후속 ChatGPT Work 작업자가 기존 작업을 정확하게 이어받을 수 있도록 작성했습니다. **문서만으로 배포·운영·PC 설치가 완료되었다는 뜻이 아닙니다.**
 
 ## 2026-10-15 Work 후속 변경

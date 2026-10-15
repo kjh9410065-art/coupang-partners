@@ -20,23 +20,28 @@
 순환 대상: **TCFLiCK 본사 → 밍카(MINGKA) → 너딩(NERDING) → 노빅(NOVIQ) → 모보카(MOVOKA) → 문서담(MUNSUDAM)**. 6일 주기로 다른 서비스를 소개합니다. 폐기한 보고팡과 공개 주소·이미지가 검증되지 않은 신규 서비스는 포함하지 않습니다.
 
 - 오후 6시 홍보글이 실패할 경우 오후 7시에 같은 서비스 재시도
-- 사이트 홍보글도 클라우드 저장 및 PC 로그인 후 OneDrive 동기화
+- 사이트 홍보글도 클라우드에 저장한 뒤 PC 문서 폴더 또는 기존 OneDrive 폴더에 자동 다운로드
 - 수정한 `완성글.html`은 다음 동기화 때 덮어쓰지 않음
 - 네이버 게시 시 태그는 직접 입력하고 이미지 붙여넣기가 누락되면 별도 저장된 이미지를 첨부
 - 서비스 자체 홍보이므로 제휴 수익 문구나 가짜 이용 후기는 작성하지 않음
 - 홍보 대상을 더 추가하려면 `cloudflare/src/site-catalog.ts`에 실제 사이트와 서비스 설명·브랜드 이미지 등록 필요
 
-## Windows + OneDrive 자동 동기화 설치
+## Windows PC 자동 저장 (OneDrive 설치 불필요)
 
-1. **OneDrive 앱에 로그인**하여 PC의 OneDrive 폴더가 있는지 확인합니다.
+1. **OneDrive를 설치할 필요가 없습니다.** 설치 프로그램이 기존 OneDrive가 있으면 해당 폴더를 쓰고, 없으면 Windows 문서 폴더를 선택합니다.
 2. GitHub의 저장소 ZIP을 내려받아 압축을 풉니다.
 3. `cloudflare/pc-sync/install.bat`를 더블클릭합니다.
 4. 기존 Cloudflare Worker HTTPS 주소를 입력합니다. 예: `https://<actual-worker>.workers.dev`.
 5. 설치 프로그램이 보여주는 **동기화 키**를 복사해 Cloudflare의 기존 Worker **Settings → Variables and Secrets**에서 `DRAFT_SYNC_TOKEN` 이름의 **Secret**으로 등록합니다. 정확히 같은 값이어야 합니다.
 6. 기존 Cloudflare Worker 프로젝트에 업데이트된 코드를 배포하고 `CONTENT_STORE` KV, 쿠팡 API 비밀 키, `AI` 바인딩이 연결됐는지 확인합니다.
-7. PC를 다시 켜거나 로그인하면 자동 동기화됩니다. 로그인 후 매시간 자동 확인합니다.
+7. PC에 설치된 Windows 작업 스케줄러가 로그인 시(등록 성공한 경우) 및 매시간 새 원고를 확인해 내려받습니다.
 
-PC 파일 저장 위치: `OneDrive\CoupangBlogDrafts\쿠팡상품\YYYY-MM-DD\01_product_상품ID\` (두 번째 상품: `02_product_상품ID`) 및 `OneDrive\CoupangBlogDrafts\TCFLiCK홍보\YYYY-MM-DD\02_site_서비스ID\`.
+**OneDrive 없는 PC 기본 저장 위치:**
+
+- `문서\\CoupangBlogDrafts\\쿠팡상품\\YYYY-MM-DD\\01_product_상품ID\\` (두 번째 상품은 `02_product_상품ID`)
+- `문서\\CoupangBlogDrafts\\TCFLiCK홍보\\YYYY-MM-DD\\02_site_서비스ID\\`
+
+OneDrive 폴더가 실제 존재하는 PC에서는 기존 OneDrive 경로를 유지합니다. 재설치 시 이미 설정되어 있는 유효한 출력 폴더를 우선 보존합니다. **별도 동기화 앱 없이도 PC의 로컬 폴더에 저장됩니다.** PC가 꺼져 있는 동안은 Cloudflare KV에 보관되고, 다음 Windows 작업 실행 시 다운로드됩니다.
 
 폴더마다:
 - `완성글.html`: **더블클릭해서 바로 여는 오프라인 완성글**. 제목, 제휴 고지문, 본문, 삽입된 공식 상품 이미지 1장, 링크를 한 화면에서 확인. 전체 복사 및 제목 복사 버튼 포함
@@ -49,9 +54,9 @@ PC 파일 저장 위치: `OneDrive\CoupangBlogDrafts\쿠팡상품\YYYY-MM-DD\01_
 
 `완성글.html`은 상품 이미지 데이터까지 파일 내부에 포함하므로 사진 파일 없이도 열 수 있습니다. 글을 네이버에 복사할 때 브라우저/네이버 편집기에 따라 이미지가 빠질 수 있으니, 그때는 같은 폴더의 `product.jpg/png/webp/svg` 파일을 직접 첨부하세요. **태그는 자동 생성하지 않으며 네이버에서 직접 작성합니다.**
 
-동기화 클라이언트는 수동으로 수정한 파일을 덮어쓰지 않습니다. PC가 꺼져 있던 동안 생성된 글은 다음 로그인 시점에 내려받으며, OneDrive 자체 동기화도 적용됩니다. Cloudflare KV 저장 만료 기간은 **120일**입니다. 상품 가격·품절·배송 조건은 변할 수 있으므로 **게시 직전 최신 상태를 다시 확인**하세요.
+동기화 클라이언트는 수동으로 수정한 파일을 덮어쓰지 않습니다. PC가 꺼져 있던 동안 생성된 글은 로그인 작업이 등록된 경우 다음 로그인 시점 또는 시간별 예약 실행 때 내려받습니다. OneDrive가 없는 경우 이 폴더는 해당 PC에만 존재하며 클라우드에 자동 백업되지 않습니다. Cloudflare KV 저장 만료 기간은 **120일**입니다. 상품 가격·품절·배송 조건은 변할 수 있으므로 **게시 직전 최신 상태를 다시 확인**하세요.
 
-원고 생성은 AI 사용량에 따라 비용이 발생할 수 있습니다. Cloudflare Secret은 GitHub 저장소나 OneDrive에 올리지 마세요. PC 인증 키는 Windows 로그인 사용자에게 묶인 암호화 저장소(`%LOCALAPPDATA%\CoupangDraftSync\settings.json`)에 보관됩니다.
+원고 생성은 AI 사용량에 따라 비용이 발생할 수 있습니다. Cloudflare Secret은 GitHub 저장소나 블로그 글 폴더에 올리지 마세요. PC 인증 키는 Windows 로그인 사용자에게 묶인 암호화 저장소(`%LOCALAPPDATA%\CoupangDraftSync\settings.json`)에 보관됩니다.
 
 ## 설치가 아직 끝나지 않았을 때
 

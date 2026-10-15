@@ -1,10 +1,6 @@
 ﻿# Run through install.bat on Windows. Keeps the sync token encrypted for this Windows account only.
 $ErrorActionPreference = "Stop"
-$onedrive = @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-if (-not $onedrive) {
-    Write-Host "OneDrive 폴더를 찾지 못했습니다. Windows OneDrive에 로그인한 뒤 다시 실행하세요." -ForegroundColor Yellow
-    exit 1
-}
+. (Join-Path $PSScriptRoot "resolve-folder.ps1")
 $configDir = Join-Path $env:LOCALAPPDATA "CoupangDraftSync"
 [IO.Directory]::CreateDirectory($configDir) | Out-Null
 $configFile = Join-Path $configDir "settings.json"
@@ -38,8 +34,11 @@ if ($existing -and $existing.encryptedToken) {
     Write-Host "인증 키는 공개하거나 GitHub에 올리지 마세요."
 }
 
-$outputDir = Join-Path $onedrive "CoupangBlogDrafts"
-[IO.Directory]::CreateDirectory($outputDir) | Out-Null
+# OneDrive가 없으면 Windows 문서 폴더에 직접 저장합니다.
+# 이미 설치된 폴더가 있으면 기존 경로와 수동으로 수정한 글을 유지합니다.
+$outputDir = Resolve-CoupangDraftOutputFolder -ExistingFolder ([string]$existing.outputFolder) `
+    -OneDriveFolder $env:OneDrive -OneDriveConsumerFolder $env:OneDriveConsumer `
+    -OneDriveCommercialFolder $env:OneDriveCommercial
 $settings = [ordered]@{
     workerUrl = $workerUrl.TrimEnd("/")
     encryptedToken = $encrypted
@@ -69,7 +68,8 @@ Write-Host "저장 폴더: $outputDir" -ForegroundColor Green
 Write-Host "자동 동기화: Windows 로그인 시 및 매시간"
 Write-Host "Cloudflare Worker에 새 버전 배포와 DRAFT_SYNC_TOKEN 설정이 완료된 뒤 자동 다운로드됩니다."
 Write-Host "직접 동기화하려면 sync.ps1 파일을 PowerShell로 실행하세요."
-Write-Host "설정 파일과 인증 키는 OneDrive가 아닌 PC의 LOCALAPPDATA에 저장됩니다."
+Write-Host "OneDrive는 필수가 아닙니다. 없으면 Windows 문서 폴더에 직접 저장합니다."
+Write-Host "설정 파일과 인증 키는 PC의 LOCALAPPDATA에 암호화 보관됩니다."
 
 # 최초 설치 직후에도 연결을 확인합니다. 실패하면 예약 작업이 이후 다시 시도합니다.
 try { & $sync; Write-Host "최초 동기화 확인 완료. sync.log에서 내려받은 글 수를 확인하세요." }
