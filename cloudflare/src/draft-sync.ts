@@ -30,11 +30,6 @@ export const DISCLOSURE_TEXT = "이 포스팅은 쿠팡 파트너스 활동의 �
 export const draftKey = (id: string) => "blogdraft:" + id;
 export const imageKey = (id: string) => "blogimage:" + id;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const IMAGE_CONTENT_TYPES: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
 
 function jsonResponse(data: unknown, status = 200): Response {
   return Response.json(data, {
@@ -87,15 +82,21 @@ export async function saveBlogDraft(
   }
   const imageResponse = await fetchImage(imageUrl, { signal: AbortSignal.timeout(12000) });
   if (!imageResponse.ok) throw new Error("쿠팡 이미지 조회 실패: HTTP " + imageResponse.status);
-  const mime = (imageResponse.headers.get("content-type") ?? "").split(";")[0].toLowerCase().trim();
-  const extension = IMAGE_CONTENT_TYPES[mime];
-  if (!extension) throw new Error("지원하지 않는 상품 이미지 형식: " + mime);
   const reportedSize = Number(imageResponse.headers.get("content-length") ?? "0");
   if (reportedSize > MAX_IMAGE_BYTES) throw new Error("상품 이미지 크기가 허용 범위를 초과합니다.");
   const imageBytes = await imageResponse.arrayBuffer();
   if (!imageBytes.byteLength || imageBytes.byteLength > MAX_IMAGE_BYTES) {
     throw new Error("상품 이미지가 비었거나 허용 범위를 초과합니다.");
   }
+  // 일부 CDN이 image/jpeg 대신 application/octet-stream을 반환하므로 파일 시그니처를 검증합니다.
+  const view = new Uint8Array(imageBytes);
+  const jpeg = view.length >= 3 && view[0] === 0xff && view[1] === 0xd8 && view[2] === 0xff;
+  const png = view.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => view[i] === n);
+  const webp = view.length >= 12 && String.fromCharCode(...view.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...view.slice(8, 12)) === "WEBP";
+  const extension = jpeg ? "jpg" : png ? "png" : webp ? "webp" : null;
+  if (!extension) throw new Error("지원하지 않는 상품 이미지 형식입니다.");
+  const mime = extension === "jpg" ? "image/jpeg" : extension === "png" ? "image/png" : "image/webp";
 
   const title = String(blog.title ?? "").trim();
   const content = String(blog.body ?? "").trim();
