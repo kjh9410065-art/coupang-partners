@@ -16,11 +16,13 @@ const DISALLOWED = [
 function clean(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
-function localTime(): string {
+function localTime(checkedAt: unknown): string {
+  const provided = typeof checkedAt === "string" ? new Date(checkedAt) : new Date();
+  const at = Number.isNaN(provided.getTime()) ? new Date() : provided;
   return new Intl.DateTimeFormat("ko-KR", {
     timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(new Date());
+  }).format(at);
 }
 function stripModelFormatting(value: string): string {
   return value
@@ -107,7 +109,7 @@ export async function buildBlog(recommendation: any, ai?: Ai) {
     }
     const verifiedNotes = [];
     if (price > 0) {
-      verifiedNotes.push(localTime() + " 조회 기준 쿠팡 표시 가격은 " + price.toLocaleString("ko-KR") + "원입니다.");
+      verifiedNotes.push(localTime(recommendation.generatedAt) + " 쿠팡 검색 API 조회 당시 표시 가격은 " + price.toLocaleString("ko-KR") + "원입니다.");
     }
     if (product.isRocket === true) verifiedNotes.push("쿠팡 검색 결과에서는 로켓배송으로 표시되었습니다.");
     verifiedNotes.push("실제 가격과 배송 조건은 주문 시점 및 선택 옵션에 따라 달라질 수 있습니다.");
