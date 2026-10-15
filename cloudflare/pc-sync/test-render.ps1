@@ -34,7 +34,30 @@ try {
     [IO.File]::WriteAllText($html, "edited by user", [Text.Encoding]::UTF8)
     Write-CompletedPost -Draft $draft -ImagePath $image -Destination $html | Out-Null
     if ([IO.File]::ReadAllText($html) -ne "edited by user") { throw "사용자가 수정한 완성글을 덮어썼습니다." }
-    Write-Host "PASS - offline HTML contains embedded image, content, affiliate link and copy controls"
+    # TCFLiCK service article must show its own image and link, without any Coupang affiliate language.
+    $siteImage = Join-Path $folder "product.svg"
+    $siteHtml = Join-Path $folder "사이트완성글.html"
+    [IO.File]::WriteAllText($siteImage, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#2255ee"/></svg>', [Text.Encoding]::UTF8)
+    $siteUrl = "https://tcflick.com/"
+    $siteDraft = [pscustomobject]@{
+        kind = 'site'
+        title = 'TCFLiCK 디지털 서비스 안내'
+        body = "생활 속 필요한 디지털 도구를 찾아볼 수 있는 서비스입니다." + [Environment]::NewLine + [Environment]::NewLine + "사이트 바로가기" + [Environment]::NewLine + $siteUrl
+        disclosure = ''
+        partnerUrl = $siteUrl
+        productName = 'TCFLiCK'
+        priceCheckedAt = ''
+    }
+    Write-CompletedPost -Draft $siteDraft -ImagePath $siteImage -Destination $siteHtml | Out-Null
+    $siteContent = [IO.File]::ReadAllText($siteHtml, [Text.Encoding]::UTF8)
+    foreach ($part in @("data:image/svg+xml;base64,", "서비스 홈페이지 바로가기", "TCFLiCK 디지털 서비스 안내", "완성글 전체 복사", $siteUrl)) {
+        if (-not $siteContent.Contains($part)) { throw "사이트 홍보 완성글에서 필수 요소를 찾지 못했습니다: $part" }
+    }
+    if ($siteContent.Contains('쿠팡 파트너스') -or $siteContent.Contains('쿠팡에서 상품 정보')) {
+        throw "일반 사이트 홍보글에 쿠팡 제휴 고지문이 섞였습니다."
+    }
+    Write-Host "PASS - affiliate and site HTML both render offline with embedded branded images"
+
 }
 finally {
     Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue

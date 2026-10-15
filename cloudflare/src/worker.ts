@@ -1,4 +1,6 @@
 import { buildBlog } from "./blog";
+import { pickPromoTarget } from "./site-catalog";
+import { buildSitePromo } from "./site-promo";
 import { draftKey, saveBlogDraft, handleDraftSync, type StoredDraft } from "./draft-sync";
 import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend";
 
@@ -193,36 +195,47 @@ function renderPage(): Response {
 
 const handler = {
   /**
-   * 한국시간 09:00/18:00에 서로 다른 상품 글과 공식 이미지 1장을 생성합니다.
-   * 10:00/19:00은 실패 복구용 실행이며 성공한 글을 다시 생성하지 않습니다.
+   * 하루 두 개: 오전 9시 쿠팡 상품, 오후 6시 TCFLiCK 계열 서비스 소개.
+   * 오전 10시/오후 7시는 각각 실패한 글만 다시 시도합니다.
    */
   async scheduled(controller: { cron?: string }, env: BlogEnv) {
     const date = koreaDate();
-    const slot = controller.cron === "0 9 * * *" || controller.cron === "0 10 * * *"
-      ? "evening" : "morning";
+    const isEvening = controller.cron === "0 9 * * *" || controller.cron === "0 10 * * *";
+    const slot = isEvening ? "evening" : "morning";
     const id = date + "-" + slot;
     try {
       if (!env.CONTENT_STORE) throw new Error("CONTENT_STORE KV 바인딩 없음");
-      // 재시도 실행에서도 한 날짜/시간대당 게시용 파일은 딱 하나만 저장합니다.
       const already = await env.CONTENT_STORE.get(draftKey(id), "json") as StoredDraft | null;
       if (already) return;
-      const firstDraft = slot === "evening"
-        ? await env.CONTENT_STORE.get(draftKey(date + "-morning"), "json") as StoredDraft | null
-        : null;
-      const recommendation = await getTodayRecommendation(
-        env,
-        slot === "evening",
-        firstDraft ? { keyword: firstDraft.keyword, rank: firstDraft.rank } : undefined,
-        firstDraft ? [firstDraft.productId] : [],
-      );
-      const blog = await getPreparedBlog(recommendation, env);
-      const saved = await saveBlogDraft(env, { date, slot, recommendation, blog });
-      // 기존 수동 미리보기 데이터를 유지합니다.
-      await env.CONTENT_STORE.put("latest:blog", JSON.stringify({
-        ...blog, productId: recommendation.product.productId, generatedAt: saved.createdAt,
-      }));
+      if (isEvening) {
+        // 여섯 개의 확인된 서비스 중 하나를 날짜별로 순환 홍보합니다.
+        const target = pickPromoTarget(date);
+        const blog = await buildSitePromo(target, env.AI);
+        const recommendation = {
+          keyword: target.name,
+          generatedAt: new Date().toISOString(),
+          product: {
+            productId: target.slug,
+            rank: 0,
+            productName: target.name,
+            productPrice: 0,
+            productImage: target.imageUrl,
+            productUrl: target.url,
+            partnerUrl: target.url,
+          },
+        };
+        await saveBlogDraft(env, { date, slot, kind: "site", recommendation, blog });
+      } else {
+        const recommendation = await getTodayRecommendation(env);
+        const blog = await getPreparedBlog(recommendation, env);
+        const saved = await saveBlogDraft(env, { date, slot, recommendation, blog });
+        await env.CONTENT_STORE.put("latest:blog", JSON.stringify({
+          ...blog, productId: recommendation.product.productId, generatedAt: saved.createdAt,
+        }));
+      }
       await env.CONTENT_STORE.put("last-run", JSON.stringify({
-        status: "success", date, slot, id, finishedAt: new Date().toISOString(),
+        status: "success", date, slot, kind: isEvening ? "site" : "affiliate", id,
+        finishedAt: new Date().toISOString(),
       }));
     } catch (error) {
       await env.CONTENT_STORE?.put("last-run", JSON.stringify({

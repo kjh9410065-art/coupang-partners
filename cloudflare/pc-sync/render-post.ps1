@@ -11,6 +11,7 @@ function Write-CompletedPost {
     if (-not (Test-Path -LiteralPath $ImagePath)) { throw "완성글에 필요한 상품 이미지가 없습니다." }
     if (Test-Path -LiteralPath $Destination) { return $Destination } # Preserve user edits.
 
+    $isSite = [string]$Draft.kind -eq "site"
     $title = [System.Net.WebUtility]::HtmlEncode([string]$Draft.title)
     $disclosure = [System.Net.WebUtility]::HtmlEncode([string]$Draft.disclosure)
     $affiliateUrl = [string]$Draft.partnerUrl
@@ -21,7 +22,7 @@ function Write-CompletedPost {
 
     # The generated blog body already contains the link at its end. Render that link as a real anchor once.
     $text = ([string]$Draft.body).Replace($affiliateUrl, "")
-    $text = [regex]::Replace($text, '(?m)^\s*상품 정보와 현재 구매 조건\s*$', '')
+    $text = [regex]::Replace($text, '(?m)^\s*(상품 정보와 현재 구매 조건|사이트 바로가기)\s*$', '')
     $paragraphs = [regex]::Split($text.Trim(), '\r?\n\s*\r?\n') |
         ForEach-Object { $_.Trim() } | Where-Object { $_ }
     if (@($paragraphs).Count -lt 1) { throw "완성글 본문이 비어 있습니다." }
@@ -34,7 +35,7 @@ function Write-CompletedPost {
     # Use the single official Coupang image after the opening paragraph.
     $imageBytes = [IO.File]::ReadAllBytes($ImagePath)
     $ext = [IO.Path]::GetExtension($ImagePath).ToLowerInvariant()
-    $imageMime = switch ($ext) { ".jpg" { "image/jpeg" } ".png" { "image/png" } ".webp" { "image/webp" } default { throw "지원하지 않는 상품 이미지 형식입니다." } }
+    $imageMime = switch ($ext) { ".jpg" { "image/jpeg" } ".png" { "image/png" } ".webp" { "image/webp" } ".svg" { "image/svg+xml" } default { throw "지원하지 않는 상품 이미지 형식입니다." } }
     $imageSrc = "data:" + $imageMime + ";base64," + [Convert]::ToBase64String($imageBytes)
     $imageHtml = '<figure><img alt="' + $productName + '" src="' + $imageSrc + '"></figure>'
     $blocks.Insert(1, $imageHtml)
@@ -80,7 +81,7 @@ footer {margin:18px 4px;color:#697586;font-size:12px}
 <main class="page">
 <div class="toolbar">
  <div class="topline"><span class="marker">NAVER BLOG · 완성글 미리보기</span><span class="marker">OFFLINE FILE</span></div>
- <h2>제목·고지문·본문·상품 이미지·제휴 링크</h2>
+ <h2>{{TOOLBAR_LABEL}}</h2>
  <p class="hint">이 파일 하나로 글 전체를 확인할 수 있습니다. 태그는 네이버에서 직접 입력하세요.</p>
  <div class="actions">
    <button type="button" onclick="copyPost()">완성글 전체 복사</button>
@@ -92,11 +93,11 @@ footer {margin:18px 4px;color:#697586;font-size:12px}
 </div>
 <article id="blog-post" class="post">
  <h1 id="post-title">{{TITLE}}</h1>
- <p class="disclosure">{{DISCLOSURE}}</p>
+ {{DISCLOSURE_BLOCK}}
  <div class="article-body">{{BODY}}</div>
- <div class="product-link"><a id="affiliate-link" href="{{LINK}}" target="_blank" rel="noopener noreferrer">쿠팡에서 상품 정보 확인하기</a></div>
+ <div class="product-link"><a id="affiliate-link" href="{{LINK}}" target="_blank" rel="noopener noreferrer">{{CTA_LABEL}}</a></div>
 </article>
-<footer>상품: {{PRODUCT_NAME}} · 가격 확인 시각: {{CHECKED_AT}} · 게시 전 가격과 판매 상태 재확인 권장</footer>
+<footer>{{FOOTER_LABEL}}</footer>
 </main>
 <script>
 function setMessage(text) {
@@ -136,12 +137,21 @@ function fallbackCopy(element) {
 </html>
 '@
 
+    $disclosureBlock = if ($isSite) { '' } else { '<p class="disclosure">' + $disclosure + '</p>' }
+    $toolbarLabel = if ($isSite) { '제목·소개글·서비스 이미지·사이트 링크' } else { '제목·고지문·본문·상품 이미지·제휴 링크' }
+    $ctaLabel = if ($isSite) { '서비스 홈페이지 바로가기' } else { '쿠팡에서 상품 정보 확인하기' }
+    $footerLabel = if ($isSite) {
+        '직접 운영하는 서비스 소개 · 게시 전에 사이트 접속과 기능 확인 권장'
+    } else {
+        '상품: ' + $productName + ' · 가격 확인 시각: ' + $checkedAt + ' · 게시 전 가격과 판매 상태 재확인 권장'
+    }
     $html = $template.Replace('{{TITLE}}', $title).
-        Replace('{{DISCLOSURE}}', $disclosure).
+        Replace('{{DISCLOSURE_BLOCK}}', $disclosureBlock).
+        Replace('{{TOOLBAR_LABEL}}', $toolbarLabel).
+        Replace('{{CTA_LABEL}}', $ctaLabel).
+        Replace('{{FOOTER_LABEL}}', $footerLabel).
         Replace('{{BODY}}', ($blocks -join [Environment]::NewLine)).
-        Replace('{{LINK}}', $link).
-        Replace('{{PRODUCT_NAME}}', $productName).
-        Replace('{{CHECKED_AT}}', $checkedAt)
+        Replace('{{LINK}}', $link)
 
     # Write atomically and never overwrite a file that the user may have edited.
     $temporary = $Destination + ".building"

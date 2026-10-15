@@ -10,6 +10,7 @@ export interface SyncEnv {
 }
 export interface StoredDraft {
   id: string;
+  kind?: "affiliate" | "site";
   date: string;
   slot: "morning" | "evening";
   createdAt: string;
@@ -61,6 +62,7 @@ export async function saveBlogDraft(
   input: {
     date: string;
     slot: "morning" | "evening";
+    kind?: "affiliate" | "site";
     recommendation: any;
     blog: { title: string; body: string };
   },
@@ -68,6 +70,7 @@ export async function saveBlogDraft(
 ): Promise<StoredDraft> {
   if (!env.CONTENT_STORE) throw new Error("CONTENT_STORE KV가 연결되지 않았습니다.");
   const { date, slot, recommendation, blog } = input;
+  const kind = input.kind === "site" ? "site" : "affiliate";
   const id = date + "-" + slot;
   if (!isValidId(id)) throw new Error("초안 날짜 또는 구분이 올바르지 않습니다.");
   const existing = await env.CONTENT_STORE.get(draftKey(id), "json") as StoredDraft | null;
@@ -94,9 +97,20 @@ export async function saveBlogDraft(
   const png = view.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => view[i] === n);
   const webp = view.length >= 12 && String.fromCharCode(...view.slice(0, 4)) === "RIFF" &&
     String.fromCharCode(...view.slice(8, 12)) === "WEBP";
-  const extension = jpeg ? "jpg" : png ? "png" : webp ? "webp" : null;
+  // 사이트 운영자가 등록한 자체 브랜드 SVG를 이미지로 저장할 수 있습니다.
+  // 외부 스크립트·이벤트 속성·원격 리소스가 있는 SVG는 차단합니다.
+  const svgText = kind === "site" && !jpeg && !png && !webp && imageBytes.byteLength < 300_000
+    ? new TextDecoder().decode(imageBytes)
+    : "";
+  const isSafeSvg = svgText &&
+    /<svg(?:\s|>)/i.test(svgText) &&
+    !/<(?:script|foreignObject|iframe|object|embed|image)(?:\s|>)/i.test(svgText) &&
+    !/<!DOCTYPE|<!ENTITY|\son[a-z]+\s*=|javascript:/i.test(svgText) &&
+    !/(?:href|src)\s*=\s*["']\s*(?:https?:|data:|\/\/)/i.test(svgText) &&
+    !/url\s*\(\s*(?!#)/i.test(svgText);
+  const extension = jpeg ? "jpg" : png ? "png" : webp ? "webp" : isSafeSvg ? "svg" : null;
   if (!extension) throw new Error("지원하지 않는 상품 이미지 형식입니다.");
-  const mime = extension === "jpg" ? "image/jpeg" : extension === "png" ? "image/png" : "image/webp";
+  const mime = extension === "jpg" ? "image/jpeg" : extension === "png" ? "image/png" : extension === "svg" ? "image/svg+xml" : "image/webp";
 
   const title = String(blog.title ?? "").trim();
   const content = String(blog.body ?? "").trim();
@@ -104,14 +118,14 @@ export async function saveBlogDraft(
     throw new Error("검증된 본문 또는 제휴 링크가 없어 초안을 저장하지 않았습니다.");
   }
   const draft: StoredDraft = {
-    id, date, slot, createdAt: new Date().toISOString(),
+    id, kind, date, slot, createdAt: new Date().toISOString(),
     keyword: String(recommendation.keyword ?? ""),
     productId,
     rank: Number(product.rank) || 0,
     productName: String(product.productName ?? ""),
     productPrice: Number(product.productPrice) || 0,
     priceCheckedAt: String(recommendation.generatedAt ?? new Date().toISOString()),
-    title, body: content, disclosure: DISCLOSURE_TEXT,
+    title, body: content, disclosure: kind === "site" ? "" : DISCLOSURE_TEXT,
     partnerUrl, imageFilename: "product." + extension, imageMime: mime,
   };
   // 데이터의 일부만 남는 경우 다시 시도할 수 있도록 본문은 마지막에 기록합니다.

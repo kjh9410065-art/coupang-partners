@@ -37,8 +37,10 @@ try {
     foreach ($draft in @($response.drafts)) {
         if ($null -eq $draft -or $draft.id -notmatch '^\d{4}-\d{2}-\d{2}-(morning|evening)$') { continue }
         if ($draft.date -notmatch '^\d{4}-\d{2}-\d{2}$' -or $draft.productId -notmatch '^[0-9A-Za-z_-]{1,40}$') { continue }
-        $slotName = if ($draft.slot -eq "morning") { "01_morning" } else { "02_evening" }
-        $dayDir = Join-Path $targetRoot $draft.date
+        $isSite = [string]$draft.kind -eq "site"
+        $category = if ($isSite) { "TCFLiCK홍보" } else { "쿠팡상품" }
+        $slotName = if ($isSite) { "02_site" } else { "01_product" }
+        $dayDir = Join-Path (Join-Path $targetRoot $category) $draft.date
         $draftDir = Join-Path $dayDir ($slotName + "_" + $draft.productId)
         [IO.Directory]::CreateDirectory($draftDir) | Out-Null
 
@@ -50,27 +52,29 @@ try {
             Log ("SKIP invalid article " + $draft.id); continue
         }
         $nl = [Environment]::NewLine
-        $copyBody = $disclosure + $nl + $nl + $body
+        $copyBody = if ($isSite) { $body } else { $disclosure + $nl + $nl + $body }
         Save-If-Missing (Join-Path $draftDir "title.txt") ($title + $nl)
         Save-If-Missing (Join-Path $draftDir "body.txt") ($copyBody + $nl)
         Save-If-Missing (Join-Path $draftDir "post.txt") ($title + $nl + $nl + $copyBody + $nl)
-        Save-If-Missing (Join-Path $draftDir "product-link.txt") ($partnerUrl + $nl)
+        $linkName = if ($isSite) { "site-link.txt" } else { "product-link.txt" }
+        Save-If-Missing (Join-Path $draftDir $linkName) ($partnerUrl + $nl)
         $metadata = [ordered]@{
             generatedAt = $draft.createdAt
             priceCheckedAt = $draft.priceCheckedAt
-            source = "Coupang Partners API"
+            kind = if ($isSite) { "site" } else { "affiliate" }
+            source = if ($isSite) { "TCFLiCK service repository" } else { "Coupang Partners API" }
             productName = $draft.productName
             priceAtGeneration = $draft.productPrice
             keyword = $draft.keyword
             productId = $draft.productId
             image = $draft.imageFilename
-            note = "게시 전에 가격 및 판매 가능 여부를 다시 확인하세요."
+            note = if ($isSite) { "게시 전 사이트 기능과 접속 가능 여부를 확인하세요." } else { "게시 전에 가격 및 판매 가능 여부를 다시 확인하세요." }
         } | ConvertTo-Json -Depth 4
         Save-If-Missing (Join-Path $draftDir "meta.json") ($metadata + $nl)
 
         # Cloudflare KV에 저장한 원본 이미지 바이트를 내려받습니다.
         $imageName = [string]$draft.imageFilename
-        if ($imageName -notmatch '^product\.(jpg|png|webp)$') {
+        if ($imageName -notmatch '^product\.(jpg|png|webp|svg)$') {
             Log ("SKIP invalid image filename " + $draft.id); continue
         }
         $imagePath = Join-Path $draftDir $imageName
