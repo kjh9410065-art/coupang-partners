@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 $configFile = Join-Path $env:LOCALAPPDATA "CoupangDraftSync\settings.json"
 $logFile = Join-Path $env:LOCALAPPDATA "CoupangDraftSync\sync.log"
 if (-not (Test-Path -LiteralPath $configFile)) { throw "먼저 install.bat를 실행하여 동기화를 설정하세요." }
+# 완성글.html 생성 함수 (상품 이미지가 다운로드된 뒤 실행)
+. (Join-Path $PSScriptRoot "render-post.ps1")
 
 function Log([string]$message) {
     $line = (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + " " + $message
@@ -83,6 +85,15 @@ try {
                 Log ("IMAGE ERROR " + $draft.id + " " + $_.Exception.Message)
                 continue
             }
+        }
+        # 글과 이미지를 한 파일에서 볼 수 있는 오프라인 '완성글.html'도 생성합니다.
+        # 사용자가 손본 파일은 덮어쓰지 않습니다.
+        try {
+            $readyHtml = Join-Path $draftDir "완성글.html"
+            Write-CompletedPost -Draft $draft -ImagePath $imagePath -Destination $readyHtml | Out-Null
+        } catch {
+            Log ("HTML ERROR " + $draft.id + " " + $_.Exception.Message)
+            continue
         }
         $count++
     }
