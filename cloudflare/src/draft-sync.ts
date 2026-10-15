@@ -105,7 +105,9 @@ export async function saveBlogDraft(
   const isSafeSvg = svgText &&
     /<svg(?:\s|>)/i.test(svgText) &&
     !/<(?:script|foreignObject|iframe|object|embed|image)(?:\s|>)/i.test(svgText) &&
-    !/<!DOCTYPE|<!ENTITY|\son[a-z]+\s*=|javascript:|https?:\/\/|url\s*\(/i.test(svgText);
+    !/<!DOCTYPE|<!ENTITY|\son[a-z]+\s*=|javascript:/i.test(svgText) &&
+    !/(?:href|src)\s*=\s*["']\s*(?:https?:|data:|\/\/)/i.test(svgText) &&
+    !/url\s*\(\s*(?!#)/i.test(svgText);
   const extension = jpeg ? "jpg" : png ? "png" : webp ? "webp" : isSafeSvg ? "svg" : null;
   if (!extension) throw new Error("지원하지 않는 상품 이미지 형식입니다.");
   const mime = extension === "jpg" ? "image/jpeg" : extension === "png" ? "image/png" : extension === "svg" ? "image/svg+xml" : "image/webp";
