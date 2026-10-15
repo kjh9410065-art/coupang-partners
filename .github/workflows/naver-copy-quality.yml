@@ -1,4 +1,4 @@
-name: Naver copy and cloud sync checks
+name: Manual recommendation checks
 on:
   push:
     branches: [main]
@@ -6,7 +6,6 @@ on:
     paths:
       - 'cloudflare/src/**'
       - 'cloudflare/tests/**'
-      - 'cloudflare/pc-sync/**'
       - 'cloudflare/wrangler.jsonc'
       - '.github/workflows/naver-copy-quality.yml'
   workflow_dispatch:
@@ -24,28 +23,3 @@ jobs:
       - name: Test article quality, pricing and draft sync
         run: node --experimental-strip-types --test cloudflare/tests/*.test.mjs
 
-  windows-script-parse:
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate PowerShell installer and sync scripts
-        shell: powershell
-        run: |
-          $errors = $null
-          foreach ($file in @('cloudflare/pc-sync/setup.ps1', 'cloudflare/pc-sync/sync.ps1', 'cloudflare/pc-sync/resolve-folder.ps1', 'cloudflare/pc-sync/render-post.ps1', 'cloudflare/pc-sync/test-render.ps1', 'cloudflare/pc-sync/test-folder.ps1')) {
-            $errors = $null
-            $tokens = $null
-            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error $_.ToString() }
-              exit 1
-            }
-          }
-      - name: Generate an offline HTML post and inspect its content
-        shell: powershell
-        run: ./cloudflare/pc-sync/test-render.ps1
-      - name: Verify local Documents folder without OneDrive
-        shell: powershell
-        run: ./cloudflare/pc-sync/test-folder.ps1

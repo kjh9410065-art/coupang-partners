@@ -1,7 +1,4 @@
 import { buildBlog } from "./blog.ts";
-import { pickPromoTarget } from "./site-catalog.ts";
-import { buildSitePromo } from "./site-promo.ts";
-import { draftKey, saveBlogDraft, handleDraftSync, type StoredDraft } from "./draft-sync.ts";
 import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend.ts";
 
 /**
@@ -13,7 +10,7 @@ import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommen
  */
 
 
-type BlogEnv = RecommendEnv & { AI?: Ai; DRAFT_SYNC_TOKEN?: string };
+type BlogEnv = RecommendEnv & { AI?: Ai };
 
 /** 동일한 상품/가격의 원고는 일정 시간 저장해 AI 호출을 반복하지 않습니다. */
 async function getPreparedBlog(recommendation: any, env: BlogEnv) {
@@ -196,85 +193,11 @@ function renderPage(): Response {
 }
 
 const handler = {
-  /**
-   * 하루 세 개: 오전 9시/오후 2시 쿠팡 상품, 오후 6시 사이트 소개.
-   * 오전 10시/오후 3시/오후 7시는 각각 실패한 글만 재시도합니다.
-   */
-  async scheduled(controller: { cron?: string; scheduledTime?: number }, env: BlogEnv) {
-    const slots: Record<string, "morning" | "afternoon" | "evening"> = {
-      "0 0 * * *": "morning", "0 1 * * *": "morning",
-      "0 5 * * *": "afternoon", "0 6 * * *": "afternoon",
-      "0 9 * * *": "evening", "0 10 * * *": "evening",
-    };
-    // 한 개의 크론에 여러 시간을 지정해 무료 계정의 트리거 개수를 아낍니다.
-    // 실제 실행이 지연돼도 원래 예약 시각으로 원고 종류를 결정합니다.
-    const combinedCron = "0 0,1,5,6,9,10 * * *";
-    const scheduledAt = controller.scheduledTime;
-    if (controller.cron === combinedCron && !Number.isFinite(scheduledAt)) {
-      throw new Error("예약 실행 시각이 없습니다.");
-    }
-    const cron = controller.cron === combinedCron
-      ? "0 " + new Date(scheduledAt!).getUTCHours() + " * * *"
-      : controller.cron;
-    const slot = slots[cron ?? ""];
-    if (!slot) throw new Error("등록되지 않은 생성 일정입니다.");
-    const date = koreaDate(controller.scheduledTime);
-    const isEvening = slot === "evening";
-    const id = date + "-" + slot;
-    try {
-      if (!env.CONTENT_STORE) throw new Error("CONTENT_STORE KV 바인딩 없음");
-      const already = await env.CONTENT_STORE.get(draftKey(id), "json") as StoredDraft | null;
-      if (already) return;
-      if (isEvening) {
-        // 여섯 개의 확인된 서비스 중 하나를 날짜별로 순환 홍보합니다.
-        const target = pickPromoTarget(date);
-        const blog = await buildSitePromo(target, env.AI);
-        const recommendation = {
-          keyword: target.name,
-          generatedAt: new Date().toISOString(),
-          product: {
-            productId: target.slug,
-            rank: 0,
-            productName: target.name,
-            productPrice: 0,
-            productImage: target.imageUrl,
-            productUrl: target.url,
-            partnerUrl: target.url,
-          },
-        };
-        await saveBlogDraft(env, { date, slot, kind: "site", recommendation, blog });
-      } else {
-        const otherSlot = slot === "morning" ? "afternoon" : "morning";
-        const other = await env.CONTENT_STORE.get(draftKey(date + "-" + otherSlot), "json") as StoredDraft | null;
-        const recommendation = await getTodayRecommendation(env, false, undefined, other ? [other.productId] : []);
-        const blog = await getPreparedBlog(recommendation, env);
-        const saved = await saveBlogDraft(env, { date, slot, recommendation, blog });
-        await env.CONTENT_STORE.put("latest:blog", JSON.stringify({
-          ...blog, productId: recommendation.product.productId, generatedAt: saved.createdAt,
-        }));
-      }
-      const report = JSON.stringify({
-        status: "success", date, slot, kind: isEvening ? "site" : "affiliate", id,
-        finishedAt: new Date().toISOString(),
-      });
-      await env.CONTENT_STORE.put("run:" + id, report, { expirationTtl: 120 * 86400 });
-      await env.CONTENT_STORE.put("last-run", report);
-    } catch (error) {
-      const report = JSON.stringify({
-        status: "failed", date, slot,
-        reason: error instanceof Error ? error.message : "알 수 없는 오류",
-        finishedAt: new Date().toISOString(),
-      });
-      await env.CONTENT_STORE?.put("run:" + id, report, { expirationTtl: 120 * 86400 });
-      await env.CONTENT_STORE?.put("last-run", report);
-      throw error;
-    }
-  },
   async fetch(request: Request, env: BlogEnv) {
     const url = new URL(request.url);
 
-    // 파일 목록과 이미지 내려받기는 비밀 동기화 토큰이 있어야 가능합니다.
-    if (url.pathname.startsWith("/sync/")) return handleDraftSync(request, env);
+    // 자동 생성 및 PC 동기화는 사용자 요청으로 제거했습니다.
+    if (url.pathname.startsWith("/sync/")) return new Response("Automation removed", { status: 410 });
 
     if (url.pathname === "/") return renderPage();
 
