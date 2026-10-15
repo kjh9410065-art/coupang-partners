@@ -44,3 +44,17 @@ test('six cron events produce exactly two different products and one promotion; 
 test('Korean date uses scheduled timestamp across UTC midnight',()=>{
   assert.equal(koreaDate(Date.parse('2026-10-15T15:00:00Z')),'2026-10-16');
 });
+
+// 설정 파일의 실제 통합 표현식과 예약 시각으로 6회 모두 올바른 슬롯을 찾는지 확인합니다.
+test('single cron routes all six scheduled times and skips completed slots', async()=>{
+  const cron='0 0,1,5,6,9,10 * * *';
+  const pairs=[[0,'morning'],[1,'morning'],[5,'afternoon'],[6,'afternoon'],[9,'evening'],[10,'evening']];
+  for (const [hour,slot] of pairs) {
+    const seen=[];
+    const env={CONTENT_STORE:{async get(key){seen.push(key);return {id:'existing'};}}};
+    await worker.scheduled({cron,scheduledTime:Date.UTC(2026,9,15,hour)},env);
+    assert.deepEqual(seen,['blogdraft:2026-10-15-'+slot]);
+  }
+  await assert.rejects(()=>worker.scheduled({cron},{}),/예약 실행 시각/);
+  await assert.rejects(()=>worker.scheduled({cron,scheduledTime:Date.UTC(2026,9,15,4)},{}),/등록되지/);
+});

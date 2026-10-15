@@ -206,7 +206,17 @@ const handler = {
       "0 5 * * *": "afternoon", "0 6 * * *": "afternoon",
       "0 9 * * *": "evening", "0 10 * * *": "evening",
     };
-    const slot = slots[controller.cron ?? ""];
+    // 한 개의 크론에 여러 시간을 지정해 무료 계정의 트리거 개수를 아낍니다.
+    // 실제 실행이 지연돼도 원래 예약 시각으로 원고 종류를 결정합니다.
+    const combinedCron = "0 0,1,5,6,9,10 * * *";
+    const scheduledAt = controller.scheduledTime;
+    if (controller.cron === combinedCron && !Number.isFinite(scheduledAt)) {
+      throw new Error("예약 실행 시각이 없습니다.");
+    }
+    const cron = controller.cron === combinedCron
+      ? "0 " + new Date(scheduledAt!).getUTCHours() + " * * *"
+      : controller.cron;
+    const slot = slots[cron ?? ""];
     if (!slot) throw new Error("등록되지 않은 생성 일정입니다.");
     const date = koreaDate(controller.scheduledTime);
     const isEvening = slot === "evening";
