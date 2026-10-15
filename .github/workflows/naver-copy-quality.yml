@@ -1,15 +1,16 @@
-name: Naver copy quality checks
+name: Naver copy and cloud sync checks
 on:
   pull_request:
     paths:
-      - 'cloudflare/src/blog.ts'
-      - 'cloudflare/src/worker.ts'
+      - 'cloudflare/src/**'
       - 'cloudflare/tests/**'
+      - 'cloudflare/pc-sync/**'
+      - 'cloudflare/wrangler.jsonc'
       - '.github/workflows/naver-copy-quality.yml'
   workflow_dispatch:
 
 jobs:
-  copy-tests:
+  copy-and-sync-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,5 +19,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run mock AI article tests
+      - name: Test article quality, pricing and draft sync
         run: node --experimental-strip-types --test cloudflare/tests/*.test.mjs
+
+  windows-script-parse:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PowerShell installer and sync scripts
+        shell: pwsh
+        run: |
+          $errors = $null
+          foreach ($file in @('cloudflare/pc-sync/setup.ps1', 'cloudflare/pc-sync/sync.ps1')) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.ToString() }
+              exit 1
+            }
+          }
