@@ -42,8 +42,11 @@ $settings = [ordered]@{
     outputFolder = $outputDir
 }
 [IO.File]::WriteAllText($configFile, ($settings | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
-$sync = Join-Path $PSScriptRoot "sync.ps1"
-if (-not (Test-Path -LiteralPath $sync)) { throw "sync.ps1 파일이 누락되었습니다." }
+$sourceSync = Join-Path $PSScriptRoot "sync.ps1"
+if (-not (Test-Path -LiteralPath $sourceSync)) { throw "sync.ps1 파일이 누락되었습니다." }
+# ZIP 압축 해제 폴더를 지워도 계속 동작하도록 사용자 로컬 프로그램 폴더에 설치합니다.
+$sync = Join-Path $configDir "sync.ps1"
+Copy-Item -LiteralPath $sourceSync -Destination $sync -Force
 $scriptCommand = '"' + (Join-Path $PSHOME "powershell.exe") + '" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $sync + '"'
 
 # 작업 스케줄러에 두 개의 실행 조건을 등록합니다. PC가 꺼져 있던 시간대의 글도 다음에 받을 수 있습니다.
