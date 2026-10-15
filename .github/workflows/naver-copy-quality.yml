@@ -19,4 +19,4 @@ jobs:
         with:
           node-version: '22'
       - name: Run mock AI article tests
-        run: node --experimental-strip-types --test cloudflare/tests/blog.test.mjs
+        run: node --experimental-strip-types --test cloudflare/tests/*.test.mjs
