@@ -1,5 +1,7 @@
 name: Naver copy and cloud sync checks
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'cloudflare/src/**'
@@ -29,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate PowerShell installer and sync scripts
-        shell: pwsh
+        shell: powershell
         run: |
           $errors = $null
           foreach ($file in @('cloudflare/pc-sync/setup.ps1', 'cloudflare/pc-sync/sync.ps1', 'cloudflare/pc-sync/render-post.ps1', 'cloudflare/pc-sync/test-render.ps1')) {
@@ -42,5 +44,5 @@ jobs:
             }
           }
       - name: Generate an offline HTML post and inspect its content
-        shell: pwsh
+        shell: powershell
         run: ./cloudflare/pc-sync/test-render.ps1

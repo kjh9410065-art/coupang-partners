@@ -2,10 +2,10 @@
 
 쿠팡 상품을 자동으로 선정하고 실제 Workers AI로 검증 가능한 네이버 블로그 글을 작성하는 도구입니다. 네이버 자동 게시 기능은 없습니다.
 
-## 클라우드에서 하루 2회 완성글 생성 (쿠팡 + TCFLiCK 홍보)
+## 클라우드에서 하루 3회 완성글 생성 (쿠팡 + TCFLiCK 홍보)
 
-- 한국시간 오전 9시(UTC 00:00) 쿠팡 상품 소개 1건, 오후 6시(UTC 09:00) TCFLiCK 하위 서비스 홍보 1건 자동 생성
-- 오전 10시 / 오후 7시 재시도: 이미 성공한 글은 중복 생성하지 않음
+- 한국시간 오전 9시(UTC 00:00)와 오후 2시(UTC 05:00) 서로 다른 쿠팡 상품 각 1건, 오후 6시(UTC 09:00) TCFLiCK 하위 서비스 홍보 1건 자동 생성
+- 오전 10시 / 오후 3시 / 오후 7시 재시도: 이미 성공한 글은 중복 생성하지 않음
 - 쿠팡은 당일 조회한 실제 상품 가격과 파트너스 링크 사용; 사이트 홍보는 확인된 서비스 기능만 사용, 쿠팡 제휴 고지문은 넣지 않음
 - 상품명으로 검증되지 않은 내용을 꾸며내지 않고, 품질 검사를 통과한 글만 저장
 - 글 본문·제목·고지문·가격 메타데이터 및 쿠팡의 공식 상품 이미지 1장을 KV에 최대 120일 보관
@@ -36,7 +36,7 @@
 6. 기존 Cloudflare Worker 프로젝트에 업데이트된 코드를 배포하고 `CONTENT_STORE` KV, 쿠팡 API 비밀 키, `AI` 바인딩이 연결됐는지 확인합니다.
 7. PC를 다시 켜거나 로그인하면 자동 동기화됩니다. 로그인 후 매시간 자동 확인합니다.
 
-PC 파일 저장 위치: `OneDrive\CoupangBlogDrafts\쿠팡상품\YYYY-MM-DD\01_product_상품ID\` 및 `OneDrive\CoupangBlogDrafts\TCFLiCK홍보\YYYY-MM-DD\02_site_서비스ID\`.
+PC 파일 저장 위치: `OneDrive\CoupangBlogDrafts\쿠팡상품\YYYY-MM-DD\01_product_상품ID\` (두 번째 상품: `02_product_상품ID`) 및 `OneDrive\CoupangBlogDrafts\TCFLiCK홍보\YYYY-MM-DD\02_site_서비스ID\`.
 
 폴더마다:
 - `완성글.html`: **더블클릭해서 바로 여는 오프라인 완성글**. 제목, 제휴 고지문, 본문, 삽입된 공식 상품 이미지 1장, 링크를 한 화면에서 확인. 전체 복사 및 제목 복사 버튼 포함
@@ -60,3 +60,5 @@ GitHub에 코드를 반영하는 것만으로 Cloudflare의 실제 배포와 Win
 ## Windows 기존 로컬 도구
 
 `python main.py` 및 `python auto_app.py`로 구동하는 로컬 보조 도구는 그대로 유지됩니다. 데스크톱의 `gemini_api.py`는 정형 문장 생성기이고, 새 Cloudflare Workers AI 글 작성기와는 다릅니다.
+
+인증된 `GET /sync/status`에서 당일 세 시간대의 저장 완료와 최근 실행 결과를 확인할 수 있습니다.

@@ -12,7 +12,7 @@ export interface StoredDraft {
   id: string;
   kind?: "affiliate" | "site";
   date: string;
-  slot: "morning" | "evening";
+  slot: "morning" | "afternoon" | "evening";
   createdAt: string;
   keyword: string;
   productId: string;
@@ -39,7 +39,7 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 function isValidId(id: string) {
-  return /^\d{4}-\d{2}-\d{2}-(morning|evening)$/.test(id);
+  return /^\d{4}-\d{2}-\d{2}-(morning|afternoon|evening)$/.test(id);
 }
 
 /** 민감한 동기화 자료가 외부에 노출되지 않도록 인증을 강제합니다. */
@@ -61,7 +61,7 @@ export async function saveBlogDraft(
   env: SyncEnv,
   input: {
     date: string;
-    slot: "morning" | "evening";
+    slot: "morning" | "afternoon" | "evening";
     kind?: "affiliate" | "site";
     recommendation: any;
     blog: { title: string; body: string };
@@ -140,6 +140,14 @@ export async function handleDraftSync(request: Request, env: SyncEnv): Promise<R
   const url = new URL(request.url);
   if (request.method !== "GET") return jsonResponse({ ok: false, error: "Method not allowed" }, 405);
   if (!env.CONTENT_STORE) return jsonResponse({ ok: false, error: "KV binding missing" }, 503);
+  if (url.pathname === "/sync/status") {
+    const date = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const runs = await Promise.all(["morning", "afternoon", "evening"].map(async slot => ({
+      slot, ready: !!(await env.CONTENT_STORE!.get(draftKey(date + "-" + slot))),
+      run: await env.CONTENT_STORE!.get("run:" + date + "-" + slot, "json"),
+    })));
+    return jsonResponse({ ok: true, date, runs });
+  }
   if (url.pathname === "/sync/drafts") {
     const records: StoredDraft[] = [];
     let cursor: string | undefined;
@@ -152,7 +160,7 @@ export async function handleDraftSync(request: Request, env: SyncEnv): Promise<R
     records.sort((a, b) => a.id.localeCompare(b.id));
     return jsonResponse({ ok: true, drafts: records });
   }
-  const match = url.pathname.match(/^\/sync\/drafts\/(\d{4}-\d{2}-\d{2}-(?:morning|evening))\/image$/);
+  const match = url.pathname.match(/^\/sync\/drafts\/(\d{4}-\d{2}-\d{2}-(?:morning|afternoon|evening))\/image$/);
   if (match) {
     const id = match[1];
     const stored = await env.CONTENT_STORE.get(draftKey(id), "json") as StoredDraft | null;

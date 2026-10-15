@@ -1,6 +1,12 @@
-# Windows PowerShell 5.1+ / no third-party dependencies.
+﻿# Windows PowerShell 5.1+ / no third-party dependencies.
 # Logon and hourly scheduled task: authenticated Cloudflare KV -> signed-in OneDrive folder.
 $ErrorActionPreference = "Stop"
+# 로그인/시간별 실행이 겹쳐도 같은 파일을 동시에 쓰지 않습니다.
+$syncMutex = New-Object System.Threading.Mutex($false, "Local\CoupangDraftSync")
+$ownsMutex = $false
+try {
+    try { $ownsMutex = $syncMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsMutex = $true }
+    if (-not $ownsMutex) { return }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $configFile = Join-Path $env:LOCALAPPDATA "CoupangDraftSync\settings.json"
@@ -35,11 +41,11 @@ try {
     $count = 0
 
     foreach ($draft in @($response.drafts)) {
-        if ($null -eq $draft -or $draft.id -notmatch '^\d{4}-\d{2}-\d{2}-(morning|evening)$') { continue }
+        if ($null -eq $draft -or $draft.id -notmatch '^\d{4}-\d{2}-\d{2}-(morning|afternoon|evening)$') { continue }
         if ($draft.date -notmatch '^\d{4}-\d{2}-\d{2}$' -or $draft.productId -notmatch '^[0-9A-Za-z_-]{1,40}$') { continue }
         $isSite = [string]$draft.kind -eq "site"
         $category = if ($isSite) { "TCFLiCK홍보" } else { "쿠팡상품" }
-        $slotName = if ($isSite) { "02_site" } else { "01_product" }
+        $slotName = if ($isSite) { "02_site" } elseif ([string]$draft.slot -eq "afternoon") { "02_product" } else { "01_product" }
         $dayDir = Join-Path (Join-Path $targetRoot $category) $draft.date
         $draftDir = Join-Path $dayDir ($slotName + "_" + $draft.productId)
         [IO.Directory]::CreateDirectory($draftDir) | Out-Null
@@ -109,4 +115,9 @@ catch {
 }
 finally {
     $token = $null
+}
+
+} finally {
+    if ($ownsMutex) { $syncMutex.ReleaseMutex() }
+    $syncMutex.Dispose()
 }

@@ -1,8 +1,8 @@
-import { buildBlog } from "./blog";
-import { pickPromoTarget } from "./site-catalog";
-import { buildSitePromo } from "./site-promo";
-import { draftKey, saveBlogDraft, handleDraftSync, type StoredDraft } from "./draft-sync";
-import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend";
+import { buildBlog } from "./blog.ts";
+import { pickPromoTarget } from "./site-catalog.ts";
+import { buildSitePromo } from "./site-promo.ts";
+import { draftKey, saveBlogDraft, handleDraftSync, type StoredDraft } from "./draft-sync.ts";
+import { getTodayRecommendation, koreaDate, type RecommendEnv } from "./recommend.ts";
 
 /**
  * 쿠팡 상품 추천 전용 Worker입니다.
@@ -18,7 +18,9 @@ type BlogEnv = RecommendEnv & { AI?: Ai; DRAFT_SYNC_TOKEN?: string };
 /** 동일한 상품/가격의 원고는 일정 시간 저장해 AI 호출을 반복하지 않습니다. */
 async function getPreparedBlog(recommendation: any, env: BlogEnv) {
   const p = recommendation.product;
-  const key = ["naver-copy:ai:v1", koreaDate(), p.productId, p.productPrice ?? "unknown"].join(":");
+  const identity = JSON.stringify([koreaDate(), p.productId, p.productPrice, recommendation.generatedAt, p.partnerUrl, p.isRocket]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity));
+  const key = "naver-copy:ai:v2:" + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
   const saved = await env.CONTENT_STORE?.get(key, "json");
   if (saved && typeof (saved as any).body === "string") return saved;
   const written = await buildBlog(recommendation, env.AI);
@@ -195,13 +197,19 @@ function renderPage(): Response {
 
 const handler = {
   /**
-   * 하루 두 개: 오전 9시 쿠팡 상품, 오후 6시 TCFLiCK 계열 서비스 소개.
-   * 오전 10시/오후 7시는 각각 실패한 글만 다시 시도합니다.
+   * 하루 세 개: 오전 9시/오후 2시 쿠팡 상품, 오후 6시 사이트 소개.
+   * 오전 10시/오후 3시/오후 7시는 각각 실패한 글만 재시도합니다.
    */
-  async scheduled(controller: { cron?: string }, env: BlogEnv) {
-    const date = koreaDate();
-    const isEvening = controller.cron === "0 9 * * *" || controller.cron === "0 10 * * *";
-    const slot = isEvening ? "evening" : "morning";
+  async scheduled(controller: { cron?: string; scheduledTime?: number }, env: BlogEnv) {
+    const slots: Record<string, "morning" | "afternoon" | "evening"> = {
+      "0 0 * * *": "morning", "0 1 * * *": "morning",
+      "0 5 * * *": "afternoon", "0 6 * * *": "afternoon",
+      "0 9 * * *": "evening", "0 10 * * *": "evening",
+    };
+    const slot = slots[controller.cron ?? ""];
+    if (!slot) throw new Error("등록되지 않은 생성 일정입니다.");
+    const date = koreaDate(controller.scheduledTime);
+    const isEvening = slot === "evening";
     const id = date + "-" + slot;
     try {
       if (!env.CONTENT_STORE) throw new Error("CONTENT_STORE KV 바인딩 없음");
@@ -226,23 +234,29 @@ const handler = {
         };
         await saveBlogDraft(env, { date, slot, kind: "site", recommendation, blog });
       } else {
-        const recommendation = await getTodayRecommendation(env);
+        const otherSlot = slot === "morning" ? "afternoon" : "morning";
+        const other = await env.CONTENT_STORE.get(draftKey(date + "-" + otherSlot), "json") as StoredDraft | null;
+        const recommendation = await getTodayRecommendation(env, false, undefined, other ? [other.productId] : []);
         const blog = await getPreparedBlog(recommendation, env);
         const saved = await saveBlogDraft(env, { date, slot, recommendation, blog });
         await env.CONTENT_STORE.put("latest:blog", JSON.stringify({
           ...blog, productId: recommendation.product.productId, generatedAt: saved.createdAt,
         }));
       }
-      await env.CONTENT_STORE.put("last-run", JSON.stringify({
+      const report = JSON.stringify({
         status: "success", date, slot, kind: isEvening ? "site" : "affiliate", id,
         finishedAt: new Date().toISOString(),
-      }));
+      });
+      await env.CONTENT_STORE.put("run:" + id, report, { expirationTtl: 120 * 86400 });
+      await env.CONTENT_STORE.put("last-run", report);
     } catch (error) {
-      await env.CONTENT_STORE?.put("last-run", JSON.stringify({
+      const report = JSON.stringify({
         status: "failed", date, slot,
         reason: error instanceof Error ? error.message : "알 수 없는 오류",
         finishedAt: new Date().toISOString(),
-      }));
+      });
+      await env.CONTENT_STORE?.put("run:" + id, report, { expirationTtl: 120 * 86400 });
+      await env.CONTENT_STORE?.put("last-run", report);
       throw error;
     }
   },

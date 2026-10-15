@@ -20,8 +20,8 @@ const COUPANG_DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/
 const DAILY_KEY = "recommend:today:v6";
 
 /** 한국 날짜로 추천 캐시를 구분합니다. */
-export function koreaDate() {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+export function koreaDate(timestamp = Date.now()) {
+  return new Date(timestamp + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 const BLOCKED_WORDS = [
@@ -172,7 +172,7 @@ export async function getTodayRecommendation(env: RecommendEnv, refresh = false,
   // 가격이 시간에 따라 변하므로 이전 추천을 무기한 당일 재사용하지 않습니다.
   // 30분이 지나면 쿠팡 API를 다시 조회해 상품/가격/배송 정보를 최신화합니다.
   const cachedAge = Date.now() - Date.parse(String(cached?.generatedAt ?? ""));
-  if (!refresh && cached?.date === today && cached?.product &&
+  if (!refresh && cached?.date === today && cached?.product && !excludedProductIds.includes(String(cached.product.productId)) &&
       Number.isFinite(cachedAge) && cachedAge >= 0 && cachedAge <= 30 * 60 * 1000) {
     return cached;
   }

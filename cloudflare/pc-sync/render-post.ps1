@@ -1,4 +1,4 @@
-# Generates one self-contained HTML article with an embedded product photo.
+﻿# Generates one self-contained HTML article with an embedded product photo.
 # The HTML file opens offline by double-click. Tags are intentionally left for manual entry.
 function Write-CompletedPost {
     [CmdletBinding()]

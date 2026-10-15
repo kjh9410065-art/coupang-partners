@@ -7,12 +7,12 @@ function validatePromoDraft(text: string, site: SitePromoTarget): string[] {
   const problems: string[] = [];
   if (text.length < 160 || text.length > 1200) problems.push("본문 길이가 적절하지 않습니다.");
   if (text.split(/\n\s*\n/).filter(Boolean).length < 2) problems.push("문단이 구분되지 않았습니다.");
-  if (/https?:\/\/|#[가-힣a-z]|<[^>]+>|\*\*|\x60{3}/i.test(text)) problems.push("불필요한 링크 또는 마크업이 포함됐습니다.");
+  if (/쿠팡|파트너스|수수료를\s*제공|https?:\/\/|#[가-힣a-z]|<[^>]+>|\*\*|\x60{3}/i.test(text)) problems.push("불필요한 링크 또는 마크업이 포함됐습니다.");
   if (/직접\s*(써|사용|이용)해|내돈내산|써보니|사용해보니|100%\s*만족|국내\s*1위|최저가|압도적인|무조건/i.test(text)) {
     problems.push("꾸며낸 이용 경험 또는 과장된 홍보가 포함됐습니다.");
   }
   if (/공짜\s*수익|수익을\s*보장|방문자\s*폭증|누구나\s*성공|절대\s*실패하지/i.test(text)) problems.push("검증되지 않은 성과 약속이 포함됐습니다.");
-  if (/\d+\s*(?:명|건|%|위)\b/.test(text) && !site.facts.some(f=>/\d+\s*(?:명|건|%|위)\b/.test(f))) {
+  if (/\d+\s*(?:명|건|%|위)(?![0-9])/.test(text) && !site.facts.some(f=>/\d+\s*(?:명|건|%|위)(?![0-9])/.test(f))) {
     problems.push("검증되지 않은 통계 또는 순위가 포함됐습니다.");
   }
   return problems;

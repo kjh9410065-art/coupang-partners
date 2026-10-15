@@ -75,3 +75,9 @@ test("unsafe SVG is not saved as a promotional image",async()=>{
     blog:promo
   },async()=>new Response(svg)),/지원하지 않는/);
 });
+
+test("site copy rejects affiliate disclosure and invented Korean statistics", async()=>{
+  for (const claim of ['이 포스팅은 쿠팡 파트너스 활동의 일환으로 수수료를 제공받습니다.', '방문자 100명이 이용하고 있습니다.']) {
+    await assert.rejects(()=>buildSitePromo(SITE_PROMO_TARGETS[0],{async run(){return {response:body+'\n\n'+claim};}}),/품질 검사를 통과하지/);
+  }
+});

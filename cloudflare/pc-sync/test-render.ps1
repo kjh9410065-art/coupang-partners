@@ -1,4 +1,4 @@
-# Exercise the real HTML renderer on Windows runners without requiring Cloudflare or OneDrive.
+﻿# Exercise the real HTML renderer on Windows runners without requiring Cloudflare or OneDrive.
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "render-post.ps1")
 $folder = Join-Path ([IO.Path]::GetTempPath()) ("coupang-html-test-" + [guid]::NewGuid().ToString("n"))

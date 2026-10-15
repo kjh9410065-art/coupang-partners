@@ -1,4 +1,4 @@
-# Run through install.bat on Windows. Keeps the sync token encrypted for this Windows account only.
+﻿# Run through install.bat on Windows. Keeps the sync token encrypted for this Windows account only.
 $ErrorActionPreference = "Stop"
 $onedrive = @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 if (-not $onedrive) {
@@ -22,6 +22,10 @@ try {
 if ($existing -and $existing.encryptedToken) {
     $encrypted = [string]$existing.encryptedToken
     Write-Host "기존에 설정한 인증 키를 그대로 사용합니다."
+} elseif ((Read-Host "Cloudflare에 기존 동기화 키가 있습니까? (y/N)") -eq "y") {
+    $secureToken = Read-Host "기존 DRAFT_SYNC_TOKEN 입력 (화면에 표시되지 않음)" -AsSecureString
+    if ($secureToken.Length -lt 32) { throw "동기화 키는 32자 이상이어야 합니다." }
+    $encrypted = $secureToken | ConvertFrom-SecureString
 } else {
     $bytes = New-Object byte[] 32
     $random = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -66,3 +70,7 @@ Write-Host "자동 동기화: Windows 로그인 시 및 매시간"
 Write-Host "Cloudflare Worker에 새 버전 배포와 DRAFT_SYNC_TOKEN 설정이 완료된 뒤 자동 다운로드됩니다."
 Write-Host "직접 동기화하려면 sync.ps1 파일을 PowerShell로 실행하세요."
 Write-Host "설정 파일과 인증 키는 OneDrive가 아닌 PC의 LOCALAPPDATA에 저장됩니다."
+
+# 최초 설치 직후에도 연결을 확인합니다. 실패하면 예약 작업이 이후 다시 시도합니다.
+try { & $sync; Write-Host "최초 동기화 확인 완료. sync.log에서 내려받은 글 수를 확인하세요." }
+catch { Write-Warning "최초 동기화 미완료. Worker 주소/배포/동기화 키 설정 후 다시 실행하세요." }
