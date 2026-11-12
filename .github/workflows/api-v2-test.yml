@@ -1,7 +1,7 @@
 name: Coupang API v2 validation
 on:
   push:
-    branches: [ "refactor/coupang-api-v2" ]
+    branches: [ "main", "refactor/coupang-api-v2" ]
   pull_request:
     branches: [ "main" ]
 permissions:
