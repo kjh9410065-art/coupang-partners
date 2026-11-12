@@ -44,4 +44,4 @@ limit 1~10, 생략 시 10. 금액은 응답하지 않습니다.
 ## 호환성과 주의
 기존 /recommend 화면 및 글 생성 인터페이스는 v2에서 제거됩니다(410).
 기존 배포에 의존한 자동화가 없다는 것을 다시 확인하고 배포하세요.
-main 병합이나 Cloudflare 연결 배포 변경은 테스트 및 Secret 설정 후 별도 진행합니다.
+GitHub main 반영과 Cloudflare 배포는 별도로 확인해야 합니다. Cloudflare 배포 전 Secret 설정 및 실제 API 호출 검증을 수행합니다.
