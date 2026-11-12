@@ -4,7 +4,7 @@
 
 ## 현재 상태
 - 개발 브랜치: refactor/coupang-api-v2
-- 운영 배포: 변경하지 않음 (기존 main 유지)
+- 운영 배포: GitHub 코드 반영과 Cloudflare 실배포를 구분하여 확인해야 함
 - 기존 코드 백업: backup/pre-api-rebuild-20261112
 - 사용 목적: ChatGPT 조사/집필 → GitHub tcflick-blog-queue 원고 저장 → Work 게시
 - GitHub에 API 인증키를 저장하지 않음. 새 API 토큰은 Cloudflare Secret에만 설정.
@@ -34,6 +34,6 @@ POST API에는 반드시 Authorization: Bearer <BLOG_API_TOKEN> 헤더가 필요
 3. staging Worker에서 /health 와 인증 거부/성공을 테스트.
 4. 상품 조회·단축링크 실발급 및 중복 추천 2개 테스트.
 5. GitHub tcflick-blog-queue를 통한 후속 연결을 검증.
-6. **이 단계 전까지 운영 main/Worker를 교체하지 않음.**
+6. **현재 코드는 main 반영 대상이며, Cloudflare 실배포 전 Secret 설정과 실 API 테스트가 필요합니다.**
 
 자세한 배포·보안 주의사항은 docs/API.md 참고.
