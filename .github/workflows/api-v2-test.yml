@@ -1,4 +1,4 @@
-name: Coupang API v2 unit tests
+name: Coupang API v2 validation
 on:
   push:
     branches: [ "refactor/coupang-api-v2" ]
@@ -7,12 +7,16 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  test-and-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Unit tests (no API secrets)
+      - name: Unit tests (mock Coupang API, no secrets)
         run: cd cloudflare && npm test
+      - name: Install Wrangler for compile verification
+        run: cd cloudflare && npm install --no-audit --no-fund
+      - name: Cloudflare Worker bundle validation (NO DEPLOY)
+        run: cd cloudflare && npx wrangler deploy --dry-run --outdir /tmp/coupang-api-build
